@@ -72,6 +72,7 @@ FORBIDDEN = [
     "SELECT * FROM public.checkpoints",
     "SELECT * FROM public.checkpoint_writes",
     "SELECT * FROM public.datasets",
+    "SELECT * FROM public.usage_ledger",
     # Escalation.
     "SET ROLE perry",
 ]

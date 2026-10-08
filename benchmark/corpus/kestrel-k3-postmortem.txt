@@ -1,0 +1,39 @@
+Kestrel K3 Launch Post-mortem
+
+Prepared by: Anja Petrov, Engineering Manager and K3 project lead
+Date: 15 August 2025
+
+Summary
+
+Kestrel K3 was planned to launch in March 2025. It launched in August 2025, five months late. This document explains why, what it cost and what we are changing. It is written in a blameless format: the aim is to fix the system, not to find a culprit.
+
+Timeline
+
+- November 2024: K3 passes design review; the launch is set for March 2025.
+- January 2025: pilot customers in cold-chain warehouses report that K3 units stop for obstacles that are not there.
+- February 2025: the launch is postponed while the cause is investigated.
+- April 2025: the cause is traced to the lidar sensor firmware.
+- July 2025: corrected firmware is delivered and validated.
+- August 2025: K3 launches.
+=== page break ===
+Root cause
+
+K3 uses a new lidar sensor supplied by Nordvik Optics. A defect in the sensor firmware caused false obstacle detections when the ambient temperature fell below minus 10 degrees Celsius: condensation on the sensor window was reported as solid obstacles. Our own test plan had no cold-environment test, because earlier Kestrel models were never sold into cold storage. The defect therefore reached pilot customers before anyone at Halden saw it.
+
+Nordvik Optics reproduced the problem in April and delivered firmware version 2.4 in July 2025, which filters condensation returns. We validated version 2.4 over three weeks of cold-chamber testing before launch.
+
+Impact
+
+The delay deferred an estimated EUR 3.1 million of Kestrel revenue from 2025 into 2026. Two pilot customers extended their contracts for K2 units in the meantime. No customer was lost and nobody was injured: the defect made robots stop, never move unsafely.
+=== page break ===
+Lessons and actions
+
+1. Dual-source critical sensors. Having one lidar supplier meant we could only wait for Nordvik Optics' fix. We have started qualifying a second lidar supplier, Ferrell Sensing, with a qualification target of Q2 2026.
+
+2. Test in the customer's environment. A cold-chamber test at minus 25 degrees Celsius has been added to the Kestrel release checklist and is now a launch gate for every hardware and firmware release.
+
+3. Shorter feedback loops with pilot customers. Pilot sites now send daily diagnostic logs, so false stops are visible to us within a day instead of being reported weeks later.
+
+4. Supplier firmware changes need our sign-off. Nordvik Optics and future sensor suppliers must notify us of firmware changes, and we re-run the cold-chamber test before accepting them.
+
+Owner for all actions: Anja Petrov. Progress will be reviewed by the board.

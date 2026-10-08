@@ -4,7 +4,7 @@ from pathlib import Path
 
 import gradio as gr
 
-from perry import datasets, db, threads
+from perry import datasets, db, threads, usage
 from perry.ingest import ingest_file
 from perry.supervisor import run_turn, thread_history
 
@@ -66,6 +66,11 @@ def dataset_list() -> str:
     return "\n".join(f"- **{d.name}** ({d.row_count} rows): {', '.join(d.columns)}" for d in found)
 
 
+def todays_usage() -> str:
+    today = usage.today()
+    return f"Today: {today.tokens:,} tokens · ${today.cost_usd:.4f}"
+
+
 def build() -> gr.Blocks:
     with gr.Blocks(title="Perry") as demo:
         thread_id = gr.State(None)
@@ -88,6 +93,7 @@ def build() -> gr.Blocks:
             )
             dataset_status = gr.Markdown()
             datasets_shown = gr.Markdown(dataset_list)
+            usage_status = gr.Markdown()
 
         chatbot = gr.Chatbot(height="75vh", label="Perry")
         box = gr.Textbox(placeholder="Ask Perry…", show_label=False, submit_btn=True)
@@ -97,10 +103,13 @@ def build() -> gr.Blocks:
         )
         thread_picker.input(open_thread, thread_picker, [chatbot, thread_id])
         new_button.click(new_thread, None, [chatbot, thread_id, thread_picker])
-        uploader.upload(upload, uploader, upload_status)
+        uploader.upload(upload, uploader, upload_status).then(todays_usage, None, usage_status)
         dataset_uploader.upload(
             upload_datasets, dataset_uploader, [dataset_status, datasets_shown]
         )
+        # Refreshed whenever Perry finishes an answer, and on page load.
+        chatbot.change(todays_usage, None, usage_status)
+        demo.load(todays_usage, None, usage_status)
     return demo
 
 
