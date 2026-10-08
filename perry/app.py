@@ -5,6 +5,7 @@ from pathlib import Path
 import gradio as gr
 
 from perry import (
+    charts,
     datasets,
     db,
     google_auth,
@@ -74,7 +75,8 @@ def show(outcome: str | Confirmation, history: list[dict]):
     if isinstance(outcome, Confirmation):
         note = "This needs your Confirmation: check it below, edit if needed, then approve or reject."
         return [*history, {"role": "assistant", "content": note}], *confirmation_card(outcome)
-    return [*history, {"role": "assistant", "content": outcome}], *confirmation_card(None)
+    # Any charts in the answer show as images.
+    return [*history, *charts.chat_messages(outcome)], *confirmation_card(None)
 
 
 def confirmation_card(confirmation: Confirmation | None) -> list:
@@ -157,7 +159,11 @@ def _text(content) -> str:
 def open_thread(thread_id: str | None):
     if not thread_id:
         return [], None, *confirmation_card(None)
-    return thread_history(thread_id), thread_id, *confirmation_card(pending_confirmation(thread_id))
+    history = []
+    for message in thread_history(thread_id):
+        is_answer = message["role"] == "assistant"
+        history += charts.chat_messages(message["content"]) if is_answer else [message]
+    return history, thread_id, *confirmation_card(pending_confirmation(thread_id))
 
 
 def new_thread():
@@ -359,4 +365,4 @@ if __name__ == "__main__":
     if notice := privacy.startup():
         print(notice)
     db.init_schema()
-    build().launch(server_name="127.0.0.1")
+    build().launch(server_name="127.0.0.1", allowed_paths=[str(charts.directory())])

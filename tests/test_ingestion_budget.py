@@ -126,3 +126,34 @@ def test_cli_yes_flag_skips_the_question_but_not_the_budget(
 
     assert "would cost about $0.0120" in str(stopped.value)
     assert usage.today().tokens == 0
+
+
+def test_estimate_includes_transcribing_pages_without_text_and_embedding_what_they_say(
+    perry, half_scanned_pdf
+):
+    from perry import ingest
+
+    estimate = ingest.estimate_ingestion([half_scanned_pdf])
+
+    # One call per page without text: a rendered page in, about a page of text out,
+    # which is then embedded along with the text page's 12 tokens.
+    assert estimate.calls == (
+        ingest.EstimatedCall("transcription", "fake-vision", 1600, 800),
+        ingest.EstimatedCall("embedding", "fake-embedding", 12 + 800),
+    )
+
+
+def test_transcription_calls_are_recorded_in_the_usage_ledger(perry, prices, half_scanned_pdf):
+    from fakes import FakeVision, fake_provider
+
+    from perry import ingest, models, usage
+
+    prices({"fake-vision": {"input": 100.0, "output": 200.0}})
+    vision = FakeVision("Signed invoice: the catering total is 1,234 euros.")
+
+    with models.use(fake_provider(perry.model, vision=vision)):
+        ingest.ingest_files([half_scanned_pdf])
+
+    # The fake vision model reports 300 tokens in and 50 out per page.
+    assert usage.today(kind="transcription").tokens == 350
+    assert usage.today(kind="transcription").cost_usd == pytest.approx(0.03 + 0.01)

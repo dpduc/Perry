@@ -8,6 +8,10 @@ import pymupdf
 
 SUPPORTED_SUFFIXES = {".pdf", ".md", ".txt"}
 
+# Resolution scanned pages are rendered at for transcription: readable small print,
+# without paying for more image tokens than the text needs.
+RENDER_DPI = 150
+
 # Roughly 300-400 tokens: small enough to retrieve precisely, big enough to keep context.
 CHUNK_CHARS = 1500
 OVERLAP_CHARS = 200
@@ -24,7 +28,7 @@ class ParsedDocument:
     name: str
     content_hash: str
     chunks: list[Chunk]
-    pages_without_text: list[int]
+    pages_without_text: list[int]  # e.g. scanned pages: render them to transcribe them
 
 
 def citation(document_name: str, page: int) -> str:
@@ -51,10 +55,9 @@ def parse(path: Path) -> ParsedDocument:
     without_text: list[int] = []
     for number, text in enumerate(pages, start=1):
         if not text.strip():
-            # Scanned page. Vision transcription is a later build step.
             without_text.append(number)
             continue
-        chunks.extend(Chunk(page=number, text=piece) for piece in split_text(text))
+        chunks.extend(page_chunks(number, text))
 
     return ParsedDocument(
         name=path.name,
@@ -62,6 +65,16 @@ def parse(path: Path) -> ParsedDocument:
         chunks=chunks,
         pages_without_text=without_text,
     )
+
+
+def page_chunks(page: int, text: str) -> list[Chunk]:
+    return [Chunk(page=page, text=piece) for piece in split_text(text)]
+
+
+def render_page(path: Path, page: int) -> bytes:
+    """Page `page` (1-based) of the PDF at `path`, as a PNG image."""
+    with pymupdf.open(path) as pdf:
+        return pdf[page - 1].get_pixmap(dpi=RENDER_DPI).tobytes("png")
 
 
 def split_text(text: str, size: int = CHUNK_CHARS, overlap: int = OVERLAP_CHARS) -> list[str]:

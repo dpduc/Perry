@@ -1,10 +1,11 @@
 """The one Postgres database: Documents, Chunks, Threads, Datasets and LangGraph checkpoints."""
 
 import os
+import time
 from functools import cache
 
 from pgvector.psycopg import register_vector
-from psycopg import Connection, sql
+from psycopg import Connection, errors, sql
 from psycopg.conninfo import make_conninfo
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
@@ -119,7 +120,16 @@ def init_schema() -> None:
         role_sql = sql.SQL(ANALYST_ROLE_SQL).format(
             role=sql.Identifier(ANALYST_ROLE), password=sql.Literal(ANALYST_PASSWORD)
         )
-        conn.execute(role_sql, prepare=False)
+        # The role is cluster-wide, so another database's init_schema (e.g. a parallel
+        # test run) can update it at the same moment; that loser just tries again.
+        for attempt in range(5):
+            try:
+                conn.execute(role_sql, prepare=False)
+                break
+            except errors.InternalError_:
+                if attempt == 4:
+                    raise
+                time.sleep(0.2 * (attempt + 1))
 
 
 def analyst_conninfo(statement_timeout_ms: int) -> str:
