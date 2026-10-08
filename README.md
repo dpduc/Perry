@@ -24,6 +24,8 @@ uv run python -m perry.ingest some\folder  # bulk-load Documents (.pdf, .md, .tx
 
 Documents can also be uploaded from the UI sidebar. Uploading a file with the same name replaces the old version.
 
+Push to talk: record with the microphone under the chat box and stop to send. Perry shows the transcription as your message and reads its answer aloud (text-to-speech model: `PERRY_TTS_MODEL`). Speech counts toward usage like any other model call.
+
 ## Knowledge benchmark (ADR-0001)
 
 `benchmark/` runs the same 23 questions against Perry and the predecessor QA-bot (LightRAG) over the Documents in `benchmark/documents/`, and scores correctness and Citation accuracy per question type. See the docstring of `benchmark/run.py` for the commands; results land in `benchmark/results/`.
