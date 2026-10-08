@@ -96,3 +96,19 @@ def perry(database, chat_model, tmp_path):
 
     with models.use(fake_provider(chat_model)):
         yield Perry(chat_model, tmp_path)
+
+
+@pytest.fixture
+def prices(tmp_path, monkeypatch):
+    """Write a price table (USD per million tokens) and point Perry at it."""
+    path = tmp_path / "prices.toml"
+    monkeypatch.setenv("PERRY_PRICES_FILE", str(path))
+
+    def write(table: dict[str, dict[str, float]]) -> None:
+        lines = []
+        for model, rates in table.items():
+            lines.append(f'[models."{model}"]')
+            lines += [f"{kind}_per_million = {rate}" for kind, rate in rates.items()]
+        path.write_text("\n".join(lines), encoding="utf-8")
+
+    return write

@@ -93,6 +93,11 @@ def chat_model() -> BaseChatModel:
     return model
 
 
+def embedding_model() -> str:
+    """The name the usage ledger prices embedding calls by."""
+    return _provider().embedding_model
+
+
 def embed_documents(texts: list[str]) -> list[list[float]]:
     _record_embedding(texts)
     return _provider().embed_documents(texts)
@@ -115,7 +120,7 @@ def _record_embedding(texts: list[str]) -> None:
     from perry import usage
 
     usage.check_turn_ceiling()
-    usage.record("embedding", _provider().embedding_model, estimate_tokens(texts))
+    usage.record("embedding", embedding_model(), estimate_tokens(texts))
 
 
 def _model_name(name: str) -> str:

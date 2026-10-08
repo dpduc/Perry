@@ -55,6 +55,10 @@ def supervisor():
 
 
 def run_turn(thread_id: str, message: str) -> str:
+    try:
+        usage.check_daily_cap()
+    except usage.DailyCapReached as refused:
+        return str(refused)
     config = {
         "configurable": {"thread_id": thread_id},
         # A step is a model call plus its tool calls: 2 graph steps each, plus the final answer.

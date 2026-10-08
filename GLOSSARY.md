@@ -41,6 +41,10 @@ _Avoid_: Billing log, token log
 The most tokens one Turn may use. A Turn that reaches it stops and reports what it found so far.
 _Avoid_: Token limit (ambiguous with the model's context window), budget
 
+**Daily Cap**:
+The most money Perry may spend per day, counted from the Usage Ledger since local midnight. Once reached, new Turns and ingestion are refused until midnight; a Turn already running finishes.
+_Avoid_: Quota (that is the provider's limit), daily limit
+
 ### Knowledge
 
 **Document**:
