@@ -10,6 +10,7 @@ os.environ["DATABASE_URL"] = TEST_URL
 # Set before perry loads .env (which never overrides), so tests never trace to LangSmith.
 os.environ["LANGCHAIN_TRACING_V2"] = "false"
 os.environ["LANGSMITH_TRACING"] = "false"
+os.environ["PERRY_RETRY_DELAY_SECONDS"] = "0"
 
 from fakes import ScriptedChatModel, fake_embed, fake_provider
 

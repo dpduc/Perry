@@ -8,7 +8,7 @@ from langchain_core.tools import tool
 from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.errors import GraphRecursionError
 
-from perry import db, models
+from perry import db, models, retries
 from perry.agents import knowledge
 
 # Each step is one Supervisor decision (call an Agent, or answer).
@@ -26,7 +26,9 @@ Rules:
 rather than answering from general knowledge.
 - Keep every citation in square brackets exactly as the Agent gave it.
 - If an Agent reports it couldn't find something, tell the user so. Never invent results.
-- Small talk and questions about yourself need no Agent."""
+- Small talk and questions about yourself need no Agent.
+- If a step comes back FAILED, give the results of the steps that worked, then say which \
+step failed. Never guess what a failed step would have returned."""
 
 
 @tool
@@ -48,6 +50,9 @@ def supervisor():
     return create_agent(
         models.chat_model(),
         tools=[ask_knowledge_agent],
+        middleware=[
+            retries.RetryFailedSteps(),
+        ],
         system_prompt=SYSTEM_PROMPT,
         checkpointer=_checkpointer(),
         name="supervisor",

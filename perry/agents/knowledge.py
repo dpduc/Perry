@@ -7,7 +7,7 @@ cited findings out.
 from langchain.agents import create_agent
 from langchain_core.tools import tool
 
-from perry import models
+from perry import models, retries
 from perry.search import hybrid_search
 
 SYSTEM_PROMPT = """You are Perry's Knowledge Agent. You answer questions using ONLY \
@@ -36,6 +36,7 @@ def knowledge_agent():
     return create_agent(
         models.chat_model(),
         tools=[search_documents],
+        middleware=[retries.RetryFailedSteps()],
         system_prompt=SYSTEM_PROMPT,
         name="knowledge_agent",
     )
