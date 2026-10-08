@@ -26,6 +26,8 @@ Documents can also be uploaded from the UI sidebar. Uploading a file with the sa
 
 **Datasets** (CSV, or XLSX with one Dataset per sheet) are uploaded from the sidebar's Datasets section, which lists each Dataset with its columns. Uploading a file with an existing Dataset name replaces it. The **Analysis Agent** answers questions about Datasets with SQL and shows the query it ran. That SQL runs as a separate Postgres role (`perry_analyst`) that can only read the `analytics` schema, with a statement timeout and a row limit.
 
+When SQL isn't enough (statistics, forecasts, charts), the Analysis Agent writes Python that runs in the **Sandbox**: a throwaway Docker container from the image in `sandbox/Dockerfile` (pandas, numpy, scipy, matplotlib), built on first use. It has no network, CPU, memory and time limits, no environment from the host, and sees only a temp folder holding the input CSVs Perry wrote from read-only queries. Charts it saves are kept under `%APPDATA%\Perry\charts` and shown in the chat. Sandbox tests skip when Docker isn't running.
+
 Push to talk: record with the microphone under the chat box and stop to send. Perry shows the transcription as your message and reads its answer aloud (text-to-speech model: `PERRY_TTS_MODEL`). Speech counts toward usage like any other model call.
 
 ## Eval set
@@ -36,7 +38,7 @@ uv run python -m evals                   # run them all against the real model
 uv run python -m evals knowledge-aphids  # only Turns whose id starts with this
 ```
 
-Each eval Turn ([evals/turns/](evals/turns/), one file per Agent) says which Agents must be consulted and which Citations the answer must contain; those checks pass or fail the run. An LLM judge also scores answer quality, which is only reported (and logged to the LangSmith project `perry-eval` when tracing is on). The run uses its own `perry_eval` database loaded from [evals/documents/](evals/documents/), and a fake calendar and mailbox ([evals/workspace.py](evals/workspace.py)) instead of Google. It isn't part of `uv run pytest` or the pre-commit hook, because it spends real requests: with pacing, a full run takes about 15 minutes on the free tier.
+Each eval Turn ([evals/turns/](evals/turns/), one file per Agent) says which Agents must be consulted and which Citations the answer must contain; those checks pass or fail the run. An LLM judge also scores answer quality, which is only reported (and logged to the LangSmith project `perry-eval` when tracing is on). The run uses its own `perry_eval` database loaded from [evals/documents/](evals/documents/) and [evals/datasets/](evals/datasets/) (the `analysis-python-*` Turns run Python in the Sandbox, so they need Docker), and a fake calendar and mailbox ([evals/workspace.py](evals/workspace.py)) instead of Google. It isn't part of `uv run pytest` or the pre-commit hook, because it spends real requests: with pacing, a full run takes about 15 minutes on the free tier.
 
 ## Connecting Google (Task Agent)
 

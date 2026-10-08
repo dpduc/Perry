@@ -165,3 +165,59 @@ def test_task_turns_run_against_the_eval_workspace_fake(perry):
 
     assert result.passed
     assert "Roadmap review" in result.reply and "Lunch with Priya" in result.reply
+
+
+def load_eval_datasets() -> None:
+    from evals.turns import DATASETS_DIR
+    from perry import datasets
+
+    for file in DATASETS_DIR.iterdir():
+        datasets.upload(file)
+
+
+def test_analysis_sql_turns_run_against_the_eval_datasets(perry):
+    from evals.turns import all_turns
+
+    load_eval_datasets()
+    turn = next(t for t in all_turns() if t.id == "analysis-revenue-per-region")
+    perry.script(
+        call("ask_analysis_agent", question=turn.message),
+        call("run_sql", query="SELECT region, sum(revenue) FROM sales GROUP BY 1 ORDER BY 1"),
+        last_message,
+        last_message,
+        '{"score": 5, "comment": "Correct totals."}',
+    )
+
+    result = run_eval_turn(turn, perry)
+
+    assert result.passed
+    assert "North | 181300" in result.reply and "West | 220850" in result.reply
+
+
+def test_analysis_sandbox_turns_read_the_eval_datasets(perry, monkeypatch, tmp_path):
+    from evals.turns import all_turns
+    from perry import sandbox
+
+    monkeypatch.setenv("PERRY_APP_DATA_DIR", str(tmp_path))
+    load_eval_datasets()
+    turn = next(t for t in all_turns() if t.id == "analysis-python-chart")
+    inputs = []
+
+    def fake_sandbox(code, files):
+        inputs.append(files["sales.csv"].decode())
+        return sandbox.Result(output="plotted", charts=[b"\x89PNG fake"])
+
+    monkeypatch.setattr(sandbox, "run", fake_sandbox)
+    perry.script(
+        call("ask_analysis_agent", question=turn.message),
+        call("run_python", code="...", inputs={"sales.csv": "SELECT * FROM sales"}),
+        "West is highest every month.",
+        last_message,
+        '{"score": 5, "comment": "Chart shown."}',
+    )
+
+    result = run_eval_turn(turn, perry)
+
+    assert result.passed
+    assert len(inputs[0].splitlines()) == 37  # header and 36 monthly rows
+    assert "[chart: " in result.reply

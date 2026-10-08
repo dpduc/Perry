@@ -25,7 +25,7 @@ os.environ["DATABASE_URL"] = EVAL_URL
 import psycopg
 
 from evals.harness import EvalTurn, Result, run_eval_turn
-from evals.turns import DOCUMENTS_DIR, all_turns
+from evals.turns import DATASETS_DIR, DOCUMENTS_DIR, all_turns
 
 LANGSMITH_PROJECT = "perry-eval"
 
@@ -63,7 +63,7 @@ def environment() -> Iterator[None]:
 
     db.init_schema()
     _load_documents()
-    # Datasets for Analysis Agent Turns load here too.
+    _load_datasets()
     from evals.workspace import fake_workspace
     from perry import workspace
 
@@ -95,6 +95,15 @@ def _load_documents() -> None:
         )
     for file in files:
         print(ingest_file(file).describe())
+
+
+def _load_datasets() -> None:
+    """Load `evals/datasets/` for the Analysis Agent Turns (same name replaces)."""
+    from perry import datasets
+
+    for file in sorted(DATASETS_DIR.iterdir()):
+        for result in datasets.upload(file):
+            print(result.describe())
 
 
 def run(turns: list[EvalTurn]) -> list[Result]:
