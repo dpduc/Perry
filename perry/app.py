@@ -8,19 +8,27 @@ from perry import datasets, db, google_auth, models, threads, usage, workspace
 from perry.ingest import ingest_file
 from perry.supervisor import run_turn, thread_history
 
-
-def show_user_message(message: str, history: list[dict]):
-    if not message.strip():
-        return gr.skip(), history, ""
-    return message, [*history, {"role": "user", "content": message}], ""
+EMPTY = {"text": "", "files": []}
 
 
-def answer(message: str, history: list[dict], thread_id: str | None):
-    if not message.strip():
+def show_user_message(message: dict, history: list[dict]):
+    """Show the message (text and any dropped images) in the chat and clear the box."""
+    text, images = message.get("text", ""), message.get("files", [])
+    if not text.strip() and not images:
+        return EMPTY, history, EMPTY
+    shown = [{"role": "user", "content": {"path": image}} for image in images]
+    if text.strip():
+        shown.append({"role": "user", "content": text})
+    return {"text": text, "files": images}, [*history, *shown], EMPTY
+
+
+def answer(message: dict, history: list[dict], thread_id: str | None):
+    text, images = message.get("text", ""), message.get("files", [])
+    if not text.strip() and not images:
         return history, thread_id, gr.skip()
     if thread_id is None:
-        thread_id = threads.create(message)
-    reply = run_turn(thread_id, message)
+        thread_id = threads.create(text)
+    reply = run_turn(thread_id, text, images=images)
     history = [*history, {"role": "assistant", "content": reply}]
     return history, thread_id, gr.update(choices=threads.list_recent(), value=thread_id)
 
@@ -33,11 +41,12 @@ def hear(recording: str | None, history: list[dict]):
         transcript = models.transcribe(Path(recording).read_bytes(), "audio/wav")
     except Exception as error:  # noqa: BLE001 - tell the user, keep the UI usable
         gr.Warning(f"Couldn't transcribe the recording: {error}")
-        return "", history, None, False
+        return EMPTY, history, None, False
     if not transcript.strip():
         gr.Warning("I didn't catch anything. Hold the button and speak, then release.")
-        return "", history, None, False
-    return transcript, [*history, {"role": "user", "content": transcript}], None, True
+        return EMPTY, history, None, False
+    message = {"text": transcript, "files": []}
+    return message, [*history, {"role": "user", "content": transcript}], None, True
 
 
 def read_aloud(spoken: bool, history: list[dict]):
@@ -134,7 +143,7 @@ def connect_google():
 def build() -> gr.Blocks:
     with gr.Blocks(title="Perry") as demo:
         thread_id = gr.State(None)
-        pending = gr.State("")
+        pending = gr.State(EMPTY)
         spoken = gr.State(False)  # whether the latest request came by voice
 
         with gr.Sidebar():
@@ -160,7 +169,14 @@ def build() -> gr.Blocks:
             google_status = gr.Markdown()
 
         chatbot = gr.Chatbot(height="75vh", label="Perry")
-        box = gr.Textbox(placeholder="Ask Perry…", show_label=False, submit_btn=True)
+        # Images (screenshots, photos) can be dropped or attached alongside the text.
+        box = gr.MultimodalTextbox(
+            placeholder="Ask Perry…",
+            show_label=False,
+            submit_btn=True,
+            file_types=["image"],
+            file_count="multiple",
+        )
         with gr.Row(visible=models.speech_supported()):
             mic = gr.Audio(
                 sources=["microphone"],

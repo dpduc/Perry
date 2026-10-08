@@ -23,6 +23,8 @@ from langchain_core.rate_limiters import InMemoryRateLimiter
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_google_genai.chat_models import GoogleRateLimitError
 
+from perry import images
+
 # The provider's "quota exhausted" error, so callers can report it without knowing the provider.
 RateLimitError = GoogleRateLimitError
 
@@ -259,21 +261,22 @@ class _UsageRecorder(BaseCallbackHandler):
         usage.check_turn_ceiling()
         params = kwargs.get("invocation_params") or {}
         # Fallback name for the ledger if the response doesn't name its model (fakes don't).
-        self._models[run_id] = (
-            params.get("model") or params.get("model_name") or params.get("_type", "unknown")
-        )
+        model = params.get("model") or params.get("model_name") or params.get("_type", "unknown")
+        # A call given an image (e.g. one still in the Thread) pays for it again: "vision".
+        kind = "vision" if any(images.has_images(m) for m in messages) else "chat"
+        self._models[run_id] = (model, kind)
 
     def on_llm_end(self, response, *, run_id, **kwargs) -> None:
         from perry import usage
 
-        fallback = self._models.pop(run_id, "unknown")
+        fallback, kind = self._models.pop(run_id, ("unknown", "chat"))
         for generations in response.generations:
             for generation in generations:
                 message = getattr(generation, "message", None)
                 tokens = (message.usage_metadata if message is not None else None) or {}
                 metadata = message.response_metadata if message is not None else {}
                 usage.record(
-                    "chat",
+                    kind,
                     _model_name(metadata.get("model_name") or fallback),
                     tokens.get("input_tokens", 0),
                     tokens.get("output_tokens", 0),

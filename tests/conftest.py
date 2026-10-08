@@ -75,13 +75,14 @@ class Perry:
         path.write_text(text, encoding="utf-8")
         ingest_file(path, embed=fake_embed)
 
-    def send(self, message: str) -> str:
-        """Run one Turn and return the reply the user sees."""
+    def send(self, message: str, images=()) -> str:
+        """Run one Turn and return the reply the user sees. `images` are image files
+        attached to the message, as when dropped into the chat."""
         from perry import supervisor, threads
 
         if self.thread_id is None:
             self.thread_id = threads.create(message)
-        return supervisor.run_turn(self.thread_id, message)
+        return supervisor.run_turn(self.thread_id, message, images=list(images))
 
     def say(self, audio: bytes) -> "VoiceReply":
         """Run one Turn from recorded speech, as push-to-talk does: the transcription is

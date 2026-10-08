@@ -1,6 +1,7 @@
 """The Supervisor: plans each Turn, delegates to Agents, and composes the answer."""
 
 from functools import cache
+from pathlib import Path
 
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage
@@ -10,6 +11,7 @@ from langgraph.errors import GraphRecursionError
 
 from perry import db, models, usage, workspace
 from perry.agents import analysis, knowledge, task
+from perry.images import user_message
 
 # Each step is one Supervisor decision (call an Agent, or answer).
 MAX_STEPS_PER_TURN = 6
@@ -76,7 +78,9 @@ def supervisor():
     )
 
 
-def run_turn(thread_id: str, message: str) -> str:
+def run_turn(thread_id: str, message: str, images: list[str | Path] = ()) -> str:
+    """Answer `message`, with any attached image files given to the model as well."""
+    request = user_message(message, images)
     config = {
         "configurable": {"thread_id": thread_id},
         # A step is a model call plus its tool calls: 2 graph steps each, plus the final answer.
@@ -86,9 +90,9 @@ def run_turn(thread_id: str, message: str) -> str:
     before = graph.get_state(config)
     try:
         with usage.turn(thread_id):
-            result = graph.invoke({"messages": [{"role": "user", "content": message}]}, config)
+            result = graph.invoke({"messages": [request]}, config)
     except usage.TurnTokenCeilingReached as stop:
-        return _stop_at_ceiling(graph, config, before, message, stop)
+        return _stop_at_ceiling(graph, config, before, request, stop)
     except GraphRecursionError:
         _forget_turn(graph, config, before)
         return (
@@ -122,7 +126,7 @@ def _forget_turn(graph, config: dict, before) -> None:
         )
 
 
-def _stop_at_ceiling(graph, config: dict, before, message: str, stop) -> str:
+def _stop_at_ceiling(graph, config: dict, before, request: HumanMessage, stop) -> str:
     """End the Turn with the Agents' findings so far, kept in the Thread like an answer."""
     kept = {m.id for m in before.values.get("messages", [])}
     findings = [
@@ -137,7 +141,7 @@ def _stop_at_ceiling(graph, config: dict, before, message: str, stop) -> str:
         reply += " I hadn't found anything yet. Try a narrower question."
     _forget_turn(graph, config, before)
     graph.update_state(
-        config, {"messages": [HumanMessage(message), AIMessage(reply)]}, as_node="model"
+        config, {"messages": [request, AIMessage(reply)]}, as_node="model"
     )
     return reply
 
