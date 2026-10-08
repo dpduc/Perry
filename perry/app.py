@@ -4,7 +4,7 @@ from pathlib import Path
 
 import gradio as gr
 
-from perry import datasets, db, google_auth, models, threads, usage, workspace
+from perry import charts, datasets, db, google_auth, models, threads, usage, workspace
 from perry.ingest import ingest_file
 from perry.supervisor import run_turn, thread_history
 
@@ -29,7 +29,7 @@ def answer(message: dict, history: list[dict], thread_id: str | None):
     if thread_id is None:
         thread_id = threads.create(text)
     reply = run_turn(thread_id, text, images=images)
-    history = [*history, {"role": "assistant", "content": reply}]
+    history = [*history, *charts.chat_messages(reply)]  # any charts show as images
     return history, thread_id, gr.update(choices=threads.list_recent(), value=thread_id)
 
 
@@ -75,7 +75,11 @@ def _text(content) -> str:
 def open_thread(thread_id: str | None):
     if not thread_id:
         return [], None
-    return thread_history(thread_id), thread_id
+    history = []
+    for message in thread_history(thread_id):
+        is_answer = message["role"] == "assistant"
+        history += charts.chat_messages(message["content"]) if is_answer else [message]
+    return history, thread_id
 
 
 def new_thread():
@@ -211,4 +215,4 @@ def build() -> gr.Blocks:
 
 if __name__ == "__main__":
     db.init_schema()
-    build().launch(server_name="127.0.0.1")
+    build().launch(server_name="127.0.0.1", allowed_paths=[str(charts.directory())])

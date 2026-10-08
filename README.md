@@ -26,6 +26,8 @@ Documents can also be uploaded from the UI sidebar. Uploading a file with the sa
 
 **Datasets** (CSV, or XLSX with one Dataset per sheet) are uploaded from the sidebar's Datasets section, which lists each Dataset with its columns. Uploading a file with an existing Dataset name replaces it. The **Analysis Agent** answers questions about Datasets with SQL and shows the query it ran. That SQL runs as a separate Postgres role (`perry_analyst`) that can only read the `analytics` schema, with a statement timeout and a row limit.
 
+When SQL isn't enough (statistics, forecasts, charts), the Analysis Agent writes Python that runs in the **Sandbox**: a throwaway Docker container from the image in `sandbox/Dockerfile` (pandas, numpy, scipy, matplotlib), built on first use. It has no network, CPU, memory and time limits, no environment from the host, and sees only a temp folder holding the input CSVs Perry wrote from read-only queries. Charts it saves are kept under `%APPDATA%\Perry\charts` and shown in the chat. Sandbox tests skip when Docker isn't running.
+
 Push to talk: record with the microphone under the chat box and stop to send. Perry shows the transcription as your message and reads its answer aloud (text-to-speech model: `PERRY_TTS_MODEL`). Speech counts toward usage like any other model call.
 
 ## Connecting Google (Task Agent)

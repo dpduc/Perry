@@ -9,7 +9,7 @@ from langchain_core.tools import tool
 from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.errors import GraphRecursionError
 
-from perry import db, models, usage, workspace
+from perry import charts, db, models, usage, workspace
 from perry.agents import analysis, knowledge, task
 from perry.images import user_message
 
@@ -32,7 +32,8 @@ rather than answering from general knowledge.
 - Keep every citation in square brackets exactly as the Agent gave it.
 - If an Agent reports it couldn't find something, tell the user so. Never invent results.
 - Small talk and questions about yourself need no Agent.
-- When the Analysis Agent shows the SQL it used, include that SQL unchanged in your answer."""
+- When the Analysis Agent shows the SQL or Python it used, include it unchanged in your answer.
+- Keep chart markers like [chart: <id>.png] exactly as given; they show as images."""
 
 
 @tool
@@ -109,7 +110,14 @@ def run_turn(thread_id: str, message: str, images: list[str | Path] = ()) -> str
     except BaseException:
         _forget_turn(graph, config, before)
         raise
-    return result["messages"][-1].text
+    return _answer_with_charts(result["messages"])
+
+
+def _answer_with_charts(messages: list) -> str:
+    """The Turn's final answer, keeping every chart an Agent made during the Turn."""
+    last_user = max((i for i, m in enumerate(messages) if m.type == "human"), default=-1)
+    tool_results = [m.text for m in messages[last_user + 1 :] if m.type == "tool"]
+    return charts.keep(messages[-1].text, tool_results)
 
 
 def _forget_turn(graph, config: dict, before) -> None:
@@ -149,10 +157,12 @@ def _stop_at_ceiling(graph, config: dict, before, request: HumanMessage, stop) -
 def thread_history(thread_id: str) -> list[dict]:
     """The Thread as user/assistant messages, without the Agent calls in between."""
     state = supervisor().get_state({"configurable": {"thread_id": thread_id}})
-    history = []
+    history, turn = [], []
     for msg in state.values.get("messages", []):
+        turn.append(msg)
         if msg.type == "human":
             history.append({"role": "user", "content": msg.text})
+            turn = [msg]
         elif msg.type == "ai" and not msg.tool_calls and msg.text:
-            history.append({"role": "assistant", "content": msg.text})
+            history.append({"role": "assistant", "content": _answer_with_charts(turn)})
     return history

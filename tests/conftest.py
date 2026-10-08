@@ -44,6 +44,16 @@ def database():
     return db
 
 
+@pytest.fixture(scope="session")
+def sandbox_image():
+    """The Sandbox image, built if missing. Skips when Docker isn't running."""
+    from perry import sandbox
+
+    if not sandbox.docker_running():
+        pytest.skip("Docker not running: start Docker Desktop")
+    sandbox.ensure_image()
+
+
 @dataclass(frozen=True)
 class VoiceReply:
     transcript: str

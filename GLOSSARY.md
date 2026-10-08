@@ -59,6 +59,10 @@ _Avoid_: Source, reference
 A table of your structured data (uploaded from CSV or a spreadsheet) that the Analysis Agent can query.
 _Avoid_: Table (when talking to users), spreadsheet
 
+**Sandbox**:
+The throwaway, locked-down container where the Analysis Agent's Python runs: no network, limited CPU, memory and time, and no view of your files, secrets or database. It sees only the data files Perry wrote for that run from read-only queries, and hands back printed text, tables and charts.
+_Avoid_: Code interpreter, executor, container (when talking to users)
+
 ### Actions
 
 **Workspace**:
