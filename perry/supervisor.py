@@ -8,8 +8,8 @@ from langchain_core.tools import tool
 from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.errors import GraphRecursionError
 
-from perry import db, models, usage
-from perry.agents import knowledge
+from perry import db, models, usage, workspace
+from perry.agents import knowledge, task
 
 # Each step is one Supervisor decision (call an Agent, or answer).
 MAX_STEPS_PER_TURN = 6
@@ -20,6 +20,7 @@ and answer the user.
 Agents available as tools:
 - ask_knowledge_agent: anything that could be answered from the user's own Documents \
 (notes, reports, PDFs they uploaded).
+- ask_task_agent: the user's calendar and email (what's on, what someone wrote).
 
 Rules:
 - If a question might be answered by the user's Documents, ask the Knowledge Agent \
@@ -36,6 +37,13 @@ def ask_knowledge_agent(question: str) -> str:
     return knowledge.ask(question)
 
 
+@tool
+def ask_task_agent(request: str) -> str:
+    """Ask the Task Agent to look something up in the user's calendar or email.
+    Give a self-contained request. Returns what it found."""
+    return task.ask(request)
+
+
 @cache
 def _checkpointer() -> PostgresSaver:
     checkpointer = PostgresSaver(db.pool())
@@ -47,7 +55,10 @@ def supervisor():
     # Built per call (cheap) so it always uses the current model provider.
     return create_agent(
         models.chat_model(),
-        tools=[ask_knowledge_agent],
+        tools=[
+            ask_knowledge_agent,
+            ask_task_agent,
+        ],
         system_prompt=SYSTEM_PROMPT,
         checkpointer=_checkpointer(),
         name="supervisor",
@@ -77,6 +88,9 @@ def run_turn(thread_id: str, message: str) -> str:
         _forget_turn(graph, config, before)
         # The model client already retried with backoff before giving up.
         return "The model's rate limit was reached and retrying didn't help. Try again in a minute."
+    except workspace.ReconnectNeeded as error:
+        _forget_turn(graph, config, before)
+        return str(error)
     except BaseException:
         _forget_turn(graph, config, before)
         raise

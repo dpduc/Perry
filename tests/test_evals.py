@@ -134,3 +134,34 @@ def test_knowledge_turns_include_questions_the_documents_cannot_answer():
 
     assert len(knowledge) >= 8
     assert len(not_in_documents) >= 2
+
+
+def test_eval_turns_name_only_agents_the_supervisor_has():
+    from evals.turns import all_turns
+    from perry import supervisor
+
+    for turn in all_turns():
+        for agent in turn.agents:
+            assert hasattr(supervisor, f"ask_{agent}_agent"), (turn.id, agent)
+
+
+def test_task_turns_run_against_the_eval_workspace_fake(perry):
+    from evals.turns import all_turns
+    from evals.workspace import fake_workspace
+    from perry import workspace
+
+    turn = next(t for t in all_turns() if t.id == "task-tomorrow")
+    tomorrow = fake_workspace().events[0].start.date().isoformat()
+    perry.script(
+        call("ask_task_agent", request=turn.message),
+        call("list_events", first_day=tomorrow, last_day=tomorrow),
+        last_message,
+        last_message,
+        '{"score": 5, "comment": "Lists both events."}',
+    )
+
+    with workspace.use(fake_workspace()):
+        result = run_eval_turn(turn, perry)
+
+    assert result.passed
+    assert "Roadmap review" in result.reply and "Lunch with Priya" in result.reply

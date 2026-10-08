@@ -63,10 +63,13 @@ def environment() -> Iterator[None]:
 
     db.init_schema()
     _load_documents()
-    # Workspace hook (#7): install the in-memory Workspace fake here, e.g.
-    # `with workspace.use(<fake with fixture events and mail>):`, so Task Agent Turns
-    # never reach a real Google account. Datasets for Analysis Agent Turns load here too.
-    yield
+    # Datasets for Analysis Agent Turns load here too.
+    from evals.workspace import fake_workspace
+    from perry import workspace
+
+    # Task Agent Turns never reach a real Google account.
+    with workspace.use(fake_workspace()):
+        yield
 
 
 def _create_database() -> None:
