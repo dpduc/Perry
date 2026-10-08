@@ -60,18 +60,29 @@ def test_never_retry_works_as_a_decorator_on_a_tool():
     assert delete_event.invoke({"event_id": "e1"}) == "deleted"
 
 
-def test_reaching_the_turn_token_ceiling_stops_the_turn_instead_of_being_retried():
+def ceiling_reached():
     from perry import usage
 
+    return usage.TurnTokenCeilingReached(1000)
+
+
+def google_needs_reconnecting():
+    from perry import workspace
+
+    return workspace.expired()
+
+
+@pytest.mark.parametrize("stop", [ceiling_reached, google_needs_reconnecting])
+def test_deliberate_stops_end_the_turn_instead_of_being_retried_or_reported(stop):
     runs = []
 
     def run() -> str:
         runs.append(1)
-        raise usage.TurnTokenCeilingReached(1000)
+        raise stop()
 
     lookup = tool("lookup", run, description="Does a thing.")
 
-    with pytest.raises(usage.TurnTokenCeilingReached):
+    with pytest.raises(type(stop())):
         ask(agent_with(lookup))
     assert len(runs) == 1
 
