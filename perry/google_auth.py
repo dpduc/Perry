@@ -6,7 +6,6 @@ never in the repo, Postgres or the sandbox. Nothing else in Perry reads it.
 
 import json
 import os
-import sys
 from collections.abc import Callable
 from pathlib import Path
 
@@ -15,6 +14,7 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 
 from perry import privacy, workspace
+from perry.paths import app_data_dir
 from perry.workspace import AccountKind, Status
 
 # The narrowest scopes covering every agreed Workspace operation, Read and Write,
@@ -29,16 +29,6 @@ SCOPES = [
 ]
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-
-
-def app_data_dir() -> Path:
-    """Perry's folder in the user's app-data (%APPDATA%\\Perry on Windows)."""
-    if override := os.getenv("PERRY_APP_DATA_DIR"):
-        return Path(override)
-    if sys.platform == "win32":
-        return Path(os.environ["APPDATA"]) / "Perry"
-    base = os.getenv("XDG_DATA_HOME") or Path.home() / ".local" / "share"
-    return Path(base) / "perry"
 
 
 def client_file() -> Path:
