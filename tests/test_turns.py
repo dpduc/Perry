@@ -1,0 +1,81 @@
+"""Turns end to end: what the user sees, with a scripted fake chat model and fake embeddings."""
+
+import pytest
+from fakes import call, last_message
+
+
+def test_small_talk_is_answered_without_consulting_any_agent(perry):
+    perry.script("Hi! I'm Perry. How can I help?")
+
+    reply = perry.send("Hello there")
+
+    assert reply == "Hi! I'm Perry. How can I help?"
+    assert perry.consulted() == []
+
+
+def test_question_about_documents_is_answered_by_the_knowledge_agent_with_citations(perry):
+    perry.add_document("budget.md", "The marketing budget for Q3 is 40,000 dollars.")
+    perry.add_document("hiking.md", "Trail notes: the ridge path is steep after the waterfall.")
+    perry.script(
+        call("ask_knowledge_agent", question="What is the Q3 marketing budget?"),  # Supervisor
+        call("search_documents", query="Q3 marketing budget"),  # Knowledge Agent
+        last_message,  # Knowledge Agent reports the passages it found
+        last_message,  # Supervisor passes the findings on
+    )
+
+    reply = perry.send("How big is my Q3 marketing budget?")
+
+    assert perry.consulted() == ["ask_knowledge_agent"]
+    assert reply.startswith("[budget.md]\nThe marketing budget for Q3 is 40,000 dollars.")
+
+
+def test_turn_that_exceeds_the_step_cap_stops_with_the_step_cap_message(perry):
+    from perry.supervisor import MAX_STEPS_PER_TURN
+
+    # The Supervisor keeps asking the Knowledge Agent and never answers.
+    for _ in range(MAX_STEPS_PER_TURN + 1):
+        perry.script(
+            call("ask_knowledge_agent", question="Anything about llamas?"),
+            "Nothing about llamas.",
+        )
+
+    reply = perry.send("Tell me everything about llamas")
+
+    assert reply.startswith(f"I stopped after {MAX_STEPS_PER_TURN} steps without finishing.")
+    assert perry.history() == []  # unfinished, so a retry won't show the question twice
+
+
+def test_turn_that_crashes_midway_leaves_no_dangling_message_and_retry_shows_it_once(perry):
+    perry.script("Hi! How can I help?")
+    perry.send("Hello")
+    perry.script(
+        call("ask_knowledge_agent", question="What is the Q3 marketing budget?"),
+        RuntimeError("Knowledge Agent crashed"),
+    )
+
+    with pytest.raises(RuntimeError):
+        perry.send("How big is my Q3 marketing budget?")
+
+    assert perry.history() == [
+        {"role": "user", "content": "Hello"},
+        {"role": "assistant", "content": "Hi! How can I help?"},
+    ]
+
+    perry.script("I couldn't find a budget in your Documents.")
+    perry.send("How big is my Q3 marketing budget?")
+
+    assert perry.history() == [
+        {"role": "user", "content": "Hello"},
+        {"role": "assistant", "content": "Hi! How can I help?"},
+        {"role": "user", "content": "How big is my Q3 marketing budget?"},
+        {"role": "assistant", "content": "I couldn't find a budget in your Documents."},
+    ]
+
+
+def test_first_turn_of_a_thread_that_crashes_leaves_the_thread_empty(perry):
+    perry.script(RuntimeError("model unavailable"))
+
+    with pytest.raises(RuntimeError):
+        perry.send("Hello")
+
+    assert perry.history() == []

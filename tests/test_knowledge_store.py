@@ -1,6 +1,6 @@
 """Ingestion and hybrid search against a real Postgres, with fake embeddings."""
 
-from conftest import fake_embed, fake_embed_one
+from fakes import fake_embed, fake_embed_one
 
 from perry.ingest import ingest_file
 from perry.search import hybrid_search

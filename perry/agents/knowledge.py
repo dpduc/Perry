@@ -4,8 +4,6 @@ Interface (keep it retrieval-method agnostic, see docs/adr/0001): question in,
 cited findings out.
 """
 
-from functools import cache
-
 from langchain.agents import create_agent
 from langchain_core.tools import tool
 
@@ -33,8 +31,8 @@ def search_documents(query: str) -> str:
     return "\n\n".join(f"[{hit.citation}]\n{hit.text}" for hit in hits)
 
 
-@cache
 def knowledge_agent():
+    # Built per call (cheap) so it always uses the current model provider.
     return create_agent(
         models.chat_model(),
         tools=[search_documents],
