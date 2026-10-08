@@ -63,7 +63,7 @@ def answer(
     Thread, Thread picker, then `show()`'s card outputs."""
     text, images = message.get("text", ""), message.get("files", [])
     if not text.strip() and not images:
-        return history, thread_id, gr.skip(), *[gr.skip()] * (2 + len(CARD_FIELDS) + 2)
+        return history, thread_id, gr.skip(), *[gr.skip() for _ in confirmation_card(None)]
     if thread_id is None:
         thread_id = threads.create(text)
     # A pending Confirmation is cancelled by this message; the reply says so.
@@ -260,11 +260,13 @@ def connect_google(kind: str | None):
     return google_button(), message
 
 
-def privacy_notice() -> str:
-    return privacy.startup() or ""
+def sidebar_status():
+    """Outputs: the Google button and today's usage, both as they are now."""
+    return google_button(), todays_usage()
 
 
-def build() -> gr.Blocks:
+def build(privacy_notice: str = "") -> gr.Blocks:
+    """The chat UI. `privacy_notice` (from `privacy.startup()`) shows under the Google button."""
     with gr.Blocks(title="Perry") as demo:
         thread_id = gr.State(None)
         pending = gr.State(EMPTY)
@@ -330,48 +332,58 @@ def build() -> gr.Blocks:
             )
             speaker = gr.Audio(label="Perry's answer", autoplay=True, interactive=False)
 
+        status_outputs = [google, usage_status]
+
+        def then_refresh_status(event):
+            """After anything that may call a model or the Workspace, refresh the sidebar."""
+            return event.then(sidebar_status, None, status_outputs)
+
         answer_outputs = [chatbot, thread_id, thread_picker, *card_outputs]
-        box.submit(show_user_message, [box, chatbot], [pending, chatbot, box]).then(
-            answer, [pending, chatbot, thread_id], answer_outputs
-        ).then(google_button, None, google)
+        then_refresh_status(
+            box.submit(show_user_message, [box, chatbot], [pending, chatbot, box]).then(
+                answer, [pending, chatbot, thread_id], answer_outputs
+            )
+        )
         box.submit(lambda: None, None, voice_turn)
-        mic.stop_recording(
-            hear, [mic, chatbot, thread_id], [pending, chatbot, mic, voice_turn]
-        ).then(answer, [pending, chatbot, thread_id, voice_turn], answer_outputs).then(
-            read_aloud, [voice_turn, chatbot, thread_id], speaker
-        ).then(
-            todays_usage, None, usage_status
-        ).then(google_button, None, google)
-        approve_button.click(
-            approve, [thread_id, waiting, chatbot, *card_fields], [chatbot, *card_outputs]
-        ).then(google_button, None, google)
-        reject_button.click(
-            reject, [thread_id, waiting, chatbot, card_note], [chatbot, *card_outputs]
-        ).then(google_button, None, google)
+        then_refresh_status(
+            mic.stop_recording(
+                hear, [mic, chatbot, thread_id], [pending, chatbot, mic, voice_turn]
+            )
+            .then(answer, [pending, chatbot, thread_id, voice_turn], answer_outputs)
+            .then(read_aloud, [voice_turn, chatbot, thread_id], speaker)
+        )
+        then_refresh_status(
+            approve_button.click(
+                approve, [thread_id, waiting, chatbot, *card_fields], [chatbot, *card_outputs]
+            )
+        )
+        then_refresh_status(
+            reject_button.click(
+                reject, [thread_id, waiting, chatbot, card_note], [chatbot, *card_outputs]
+            )
+        )
         thread_picker.input(open_thread, thread_picker, [chatbot, thread_id, *card_outputs])
         new_button.click(new_thread, None, [chatbot, thread_id, thread_picker, *card_outputs])
-        uploader.upload(
-            propose_upload, uploader, [uploaded, upload_status, upload_choice]
-        ).then(todays_usage, None, usage_status)
-        ingest_button.click(
-            ingest_upload, uploaded, [upload_status, upload_choice]
-        ).then(todays_usage, None, usage_status)
+        then_refresh_status(
+            uploader.upload(propose_upload, uploader, [uploaded, upload_status, upload_choice])
+        )
+        then_refresh_status(
+            ingest_button.click(ingest_upload, uploaded, [upload_status, upload_choice])
+        )
         cancel_button.click(cancel_upload, None, [uploaded, upload_status, upload_choice])
         dataset_uploader.upload(
             upload_datasets, dataset_uploader, [dataset_status, datasets_shown]
         )
-        # Refreshed whenever Perry finishes an answer, and on page load.
-        chatbot.change(todays_usage, None, usage_status)
-        demo.load(todays_usage, None, usage_status)
-        demo.load(google_button, None, google)
-        demo.load(privacy_notice, None, google_status)
+        demo.load(sidebar_status, None, status_outputs)
+        demo.load(lambda: privacy_notice, None, google_status)
         google.click(connect_google, account_kind, [google, google_status])
     return demo
 
 
 if __name__ == "__main__":
     # Before anything runs: switches tracing off if a real account is connected.
-    if notice := privacy.startup():
+    notice = privacy.startup() or ""
+    if notice:
         print(notice)
     db.init_schema()
-    build().launch(server_name="127.0.0.1", allowed_paths=[str(charts.directory())])
+    build(notice).launch(server_name="127.0.0.1", allowed_paths=[str(charts.directory())])
