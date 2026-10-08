@@ -18,7 +18,7 @@ from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, Tool
 from langchain_core.tools import tool
 from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.errors import GraphRecursionError
-from langgraph.types import Command
+from langgraph.types import Command, StateSnapshot
 
 from perry import charts, db, models, privacy, retries, usage, workspace
 from perry.agents import analysis, knowledge, task
@@ -140,12 +140,64 @@ CANCELLED_BY_NEW_MESSAGE = (
 ONE_AT_A_TIME = "Not performed: propose one Write Action at a time, then this one again."
 
 
+# A step is a model call plus its tool calls: 2 graph steps each, plus the final answer.
+RECURSION_LIMIT = 2 * MAX_STEPS_PER_TURN + 1
+
+# Kept in the Thread's checkpoints, so a Turn resumed after a Confirmation stays the
+# same Turn: same ledger attribution and token ceiling, and only what's left of its steps.
+_TURN_ID = "perry_turn_id"
+_TURN_STARTED_AT_STEP = "perry_turn_started_at_step"
+_TURN_RESUMES = "perry_turn_resumes"
+
+
 def _config(thread_id: str) -> dict:
-    return {
-        "configurable": {"thread_id": thread_id},
-        # A step is a model call plus its tool calls: 2 graph steps each, plus the final answer.
-        "recursion_limit": 2 * MAX_STEPS_PER_TURN + 1,
-    }
+    return {"configurable": {"thread_id": thread_id}}
+
+
+def _graph_step(state: StateSnapshot) -> int:
+    # -2 is LangGraph's step before a Thread's first checkpoint.
+    return (state.metadata or {}).get("step", -2)
+
+
+@dataclass(frozen=True)
+class _TurnRun:
+    """One run of a Turn: the graph, its config, the Thread as it was before this run,
+    and the user's message (None when resuming after a Confirmation)."""
+
+    graph: Any
+    config: dict
+    before: StateSnapshot
+    request: HumanMessage | None
+
+    @classmethod
+    def start(
+        cls, graph, thread_id: str, before: StateSnapshot, request: HumanMessage | None
+    ) -> "_TurnRun":
+        """A new Turn for `request`, or with no `request` the Turn `before` is paused in."""
+        paused = (before.metadata or {}) if request is None else {}
+        turn_id = paused.get(_TURN_ID) or usage.new_turn_id()
+        started_at = paused.get(_TURN_STARTED_AT_STEP, _graph_step(before))
+        # Each resume runs the paused graph step again, so it isn't counted twice.
+        resumes = paused.get(_TURN_RESUMES, -1) + 1
+        steps_used = max(0, _graph_step(before) - started_at - resumes)
+        config = {
+            **_config(thread_id),
+            "metadata": {
+                _TURN_ID: turn_id,
+                _TURN_STARTED_AT_STEP: started_at,
+                _TURN_RESUMES: resumes,
+            },
+            "recursion_limit": RECURSION_LIMIT - steps_used,
+        }
+        return cls(graph, config, before, request)
+
+    @property
+    def thread_id(self) -> str:
+        return self.config["configurable"]["thread_id"]
+
+    @property
+    def turn_id(self) -> str:
+        return self.config["metadata"][_TURN_ID]
 
 
 def run_turn(
@@ -160,8 +212,8 @@ def run_turn(
         outcome = refused
     else:
         request = user_message(message, images)
-        before = graph.get_state(config)
-        outcome = _run(graph, config, {"messages": [request]}, before, request)
+        run = _TurnRun.start(graph, thread_id, graph.get_state(config), request)
+        outcome = _run(run, {"messages": [request]})
     if cancelled and isinstance(outcome, str):
         return f"{cancelled}\n\n{outcome}"
     return outcome
@@ -170,15 +222,14 @@ def run_turn(
 def resume_turn(thread_id: str, decision: Decision) -> TurnResult:
     """Continue the Turn waiting on a Confirmation with the user's decision.
     Returns the answer, or the next Confirmation."""
-    config = _config(thread_id)
     graph = supervisor()
-    before = graph.get_state(config)
+    before = graph.get_state(_config(thread_id))
     if not before.interrupts:
         return NOTHING_PENDING
     requests = before.interrupts[0].value["action_requests"]
     rest = [{"type": "reject", "message": ONE_AT_A_TIME}] * (len(requests) - 1)
     resume = Command(resume={"decisions": [_decision(decision, requests[0]), *rest]})
-    return _run(graph, config, resume, before, None)
+    return _run(_TurnRun.start(graph, thread_id, before, None), resume)
 
 
 def pending_confirmation(thread_id: str) -> Confirmation | None:
@@ -187,23 +238,23 @@ def pending_confirmation(thread_id: str) -> Confirmation | None:
     return _confirmation(interrupts[0].value) if interrupts else None
 
 
-def _run(graph, config: dict, run_input, before, request: HumanMessage | None) -> TurnResult:
+def _run(run: _TurnRun, run_input) -> TurnResult:
     """Run (or, with no `request`, resume) a Turn and clean up the Thread if it stops early."""
 
     def stop(reply: str) -> str:
-        if request is None:
-            _abandon_confirmation(graph, config, reply)
+        if run.request is None:
+            _abandon_confirmation(run, reply)
         else:
-            _forget_turn(graph, config, before)
+            _forget_turn(run)
         return reply
 
     try:
-        with usage.turn(config["configurable"]["thread_id"]):
-            result = graph.invoke(run_input, config)
+        with usage.turn(run.thread_id, run.turn_id):
+            result = run.graph.invoke(run_input, run.config)
     except usage.TurnTokenCeilingReached as ceiling:
-        if request is None:
+        if run.request is None:
             return stop(f"I stopped because this Turn reached its limit of {ceiling.ceiling:,} tokens.")
-        return _stop_at_ceiling(graph, config, before, request, ceiling)
+        return _stop_at_ceiling(run, ceiling)
     except GraphRecursionError:
         return stop(
             f"I stopped after {MAX_STEPS_PER_TURN} steps without finishing. "
@@ -284,42 +335,43 @@ def _close_open_tool_calls(graph, config: dict, text: str) -> None:
         graph.update_state(config, {"messages": closing}, as_node="tools")
 
 
-def _abandon_confirmation(graph, config: dict, reply: str) -> None:
+def _abandon_confirmation(run: _TurnRun, reply: str) -> None:
     """End a resumed Turn that stopped early, keeping `reply` in the Thread as its answer."""
-    _close_open_tool_calls(graph, config, f"Stopped: {reply}")
-    graph.update_state(config, {"messages": [AIMessage(reply)]}, as_node="model")
+    _close_open_tool_calls(run.graph, run.config, f"Stopped: {reply}")
+    run.graph.update_state(run.config, {"messages": [AIMessage(reply)]}, as_node="model")
 
 
-def _forget_turn(graph, config: dict, before) -> None:
+def _forget_turn(run: _TurnRun) -> None:
     """Put the Thread back as it was before an unfinished Turn, so a retry doesn't repeat it."""
-    kept = {m.id for m in before.values.get("messages", [])}
+    kept = {m.id for m in run.before.values.get("messages", [])}
     if not kept:
-        _checkpointer().delete_thread(config["configurable"]["thread_id"])
+        _checkpointer().delete_thread(run.thread_id)
         return
-    added = [m for m in graph.get_state(config).values.get("messages", []) if m.id not in kept]
+    now = run.graph.get_state(run.config).values.get("messages", [])
+    added = [m for m in now if m.id not in kept]
     if added:
         # As if the model node had run: the last kept message is a final answer, so the graph ends.
-        graph.update_state(
-            config, {"messages": [RemoveMessage(id=m.id) for m in added]}, as_node="model"
+        run.graph.update_state(
+            run.config, {"messages": [RemoveMessage(id=m.id) for m in added]}, as_node="model"
         )
 
 
-def _stop_at_ceiling(graph, config: dict, before, request: HumanMessage, stop) -> str:
+def _stop_at_ceiling(run: _TurnRun, ceiling: usage.TurnTokenCeilingReached) -> str:
     """End the Turn with the Agents' findings so far, kept in the Thread like an answer."""
-    kept = {m.id for m in before.values.get("messages", [])}
+    kept = {m.id for m in run.before.values.get("messages", [])}
     findings = [
         m.text
-        for m in graph.get_state(config).values.get("messages", [])
+        for m in run.graph.get_state(run.config).values.get("messages", [])
         if m.id not in kept and m.type == "tool" and m.text
     ]
-    reply = f"I stopped because this Turn reached its limit of {stop.ceiling:,} tokens."
+    reply = f"I stopped because this Turn reached its limit of {ceiling.ceiling:,} tokens."
     if findings:
         reply += " Here is what I found so far:\n\n" + "\n\n".join(findings)
     else:
         reply += " I hadn't found anything yet. Try a narrower question."
-    _forget_turn(graph, config, before)
-    graph.update_state(
-        config, {"messages": [request, AIMessage(reply)]}, as_node="model"
+    _forget_turn(run)
+    run.graph.update_state(
+        run.config, {"messages": [run.request, AIMessage(reply)]}, as_node="model"
     )
     return reply
 

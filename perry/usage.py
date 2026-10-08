@@ -40,7 +40,7 @@ class Usage:
 
 @dataclass(frozen=True)
 class Turn:
-    thread_id: str
+    thread_id: str | None
     id: str
 
 
@@ -67,14 +67,20 @@ _current: ContextVar[Turn | None] = ContextVar("perry_turn", default=None)
 
 
 @contextmanager
-def turn(thread_id: str) -> Iterator[Turn]:
-    """Attribute every model call in this block to a new Turn on `thread_id`."""
-    current = Turn(thread_id, uuid.uuid4().hex)
+def turn(thread_id: str | None, turn_id: str | None = None) -> Iterator[Turn]:
+    """Attribute every model call in this block to the Turn `turn_id` (by default a new
+    one) on `thread_id`. Re-entering a Turn (e.g. after its Confirmation) keeps adding
+    to its token ceiling."""
+    current = Turn(thread_id, turn_id or new_turn_id())
     token = _current.set(current)
     try:
         yield current
     finally:
         _current.reset(token)
+
+
+def new_turn_id() -> str:
+    return uuid.uuid4().hex
 
 
 def current_turn() -> Turn | None:
