@@ -94,6 +94,9 @@ class Provider:
     # and the name the usage ledger prices those calls by.
     read_image: Callable[[bytes, str], Transcription] | None = None
     vision_model: str = "unknown"
+    # True only when chat (text generation) runs on this machine, so nothing the
+    # Agents read leaves it. Embeddings may still be remote: they never see email.
+    local_text_generation: bool = False
 
 
 @cache
@@ -218,6 +221,11 @@ def use(provider: Provider) -> Iterator[Provider]:
         yield provider
     finally:
         _override = previous
+
+
+def text_generation_is_local() -> bool:
+    """Whether the configured text-generation provider runs locally (Gemini doesn't)."""
+    return _provider().local_text_generation
 
 
 def chat_model() -> BaseChatModel:

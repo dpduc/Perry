@@ -154,8 +154,13 @@ class FakeVision:
 
 
 def fake_provider(
-    chat: ScriptedChatModel, *, speech: bool = True, vision: FakeVision | None = None
+    chat: ScriptedChatModel,
+    *,
+    speech: bool = True,
+    local: bool = False,
+    vision: FakeVision | None = None,
 ) -> Provider:
+    """Fake models; `local=True` makes text generation count as local (for privacy checks)."""
     vision = vision or FakeVision()
     return Provider(
         chat_model=lambda: chat,
@@ -166,4 +171,5 @@ def fake_provider(
         synthesize=fake_synthesize if speech else None,
         read_image=vision,
         vision_model=vision.model,
+        local_text_generation=local,
     )
