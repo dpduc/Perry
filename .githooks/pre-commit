@@ -1,0 +1,5 @@
+#!/bin/sh
+# Enable once per clone: git config core.hooksPath .githooks
+set -e
+uv run ruff check .
+uv run pytest -q

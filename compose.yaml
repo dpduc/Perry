@@ -1,0 +1,19 @@
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: perry
+      POSTGRES_PASSWORD: perry
+      POSTGRES_DB: perry
+    ports:
+      # 5433 so it can't collide with another local Postgres on 5432.
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U perry"]
+      interval: 2s
+      retries: 30
+
+volumes:
+  pgdata:
