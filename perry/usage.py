@@ -86,7 +86,8 @@ def check_turn_ceiling() -> None:
 def record(kind: str, model: str, input_tokens: int, output_tokens: int = 0) -> None:
     """Add one model call to the ledger, priced with the current price table.
 
-    `kind` says what the call was for, e.g. "chat" or "embedding".
+    `kind` says what the call was for, e.g. "chat", "vision" (a chat call given an
+    image) or "embedding".
     """
     current = current_turn()
     with db.pool().connection() as conn:
@@ -128,21 +129,22 @@ def turn_tokens(turn_id: str) -> int:
     return int(row["tokens"])
 
 
-def since(start: datetime) -> Usage:
-    """Everything recorded from `start` (timezone-aware) until now."""
+def since(start: datetime, kind: str | None = None) -> Usage:
+    """Everything recorded from `start` (timezone-aware) until now, optionally of one kind."""
     with db.pool().connection() as conn:
         row = conn.execute(
             "SELECT coalesce(sum(input_tokens + output_tokens), 0) AS tokens, "
-            "coalesce(sum(cost_usd), 0) AS cost FROM usage_ledger WHERE recorded_at >= %s",
-            (start,),
+            "coalesce(sum(cost_usd), 0) AS cost FROM usage_ledger "
+            "WHERE recorded_at >= %s AND (%s::text IS NULL OR kind = %s)",
+            (start, kind, kind),
         ).fetchone()
     return Usage(int(row["tokens"]), float(row["cost"]))
 
 
-def today() -> Usage:
-    """Usage since local midnight."""
+def today(kind: str | None = None) -> Usage:
+    """Usage since local midnight, optionally of one kind (e.g. "vision")."""
     midnight = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
-    return since(midnight)
+    return since(midnight, kind)
 
 
 def _prices_file() -> Path:

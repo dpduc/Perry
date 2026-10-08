@@ -8,19 +8,27 @@ from perry import db, threads, usage
 from perry.ingest import ingest_file
 from perry.supervisor import run_turn, thread_history
 
-
-def show_user_message(message: str, history: list[dict]):
-    if not message.strip():
-        return gr.skip(), history, ""
-    return message, [*history, {"role": "user", "content": message}], ""
+EMPTY = {"text": "", "files": []}
 
 
-def answer(message: str, history: list[dict], thread_id: str | None):
-    if not message.strip():
+def show_user_message(message: dict, history: list[dict]):
+    """Show the message (text and any dropped images) in the chat and clear the box."""
+    text, images = message.get("text", ""), message.get("files", [])
+    if not text.strip() and not images:
+        return EMPTY, history, EMPTY
+    shown = [{"role": "user", "content": {"path": image}} for image in images]
+    if text.strip():
+        shown.append({"role": "user", "content": text})
+    return {"text": text, "files": images}, [*history, *shown], EMPTY
+
+
+def answer(message: dict, history: list[dict], thread_id: str | None):
+    text, images = message.get("text", ""), message.get("files", [])
+    if not text.strip() and not images:
         return history, thread_id, gr.skip()
     if thread_id is None:
-        thread_id = threads.create(message)
-    reply = run_turn(thread_id, message)
+        thread_id = threads.create(text)
+    reply = run_turn(thread_id, text, images=images)
     history = [*history, {"role": "assistant", "content": reply}]
     return history, thread_id, gr.update(choices=threads.list_recent(), value=thread_id)
 
@@ -55,7 +63,7 @@ def todays_usage() -> str:
 def build() -> gr.Blocks:
     with gr.Blocks(title="Perry") as demo:
         thread_id = gr.State(None)
-        pending = gr.State("")
+        pending = gr.State(EMPTY)
 
         with gr.Sidebar():
             gr.Markdown("## Perry")
@@ -71,7 +79,14 @@ def build() -> gr.Blocks:
             usage_status = gr.Markdown()
 
         chatbot = gr.Chatbot(height="75vh", label="Perry")
-        box = gr.Textbox(placeholder="Ask Perry…", show_label=False, submit_btn=True)
+        # Images (screenshots, photos) can be dropped or attached alongside the text.
+        box = gr.MultimodalTextbox(
+            placeholder="Ask Perry…",
+            show_label=False,
+            submit_btn=True,
+            file_types=["image"],
+            file_count="multiple",
+        )
 
         box.submit(show_user_message, [box, chatbot], [pending, chatbot, box]).then(
             answer, [pending, chatbot, thread_id], [chatbot, thread_id, thread_picker]
