@@ -3,12 +3,12 @@
 from functools import cache
 
 from langchain.agents import create_agent
-from langchain_core.messages import RemoveMessage
+from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage
 from langchain_core.tools import tool
 from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.errors import GraphRecursionError
 
-from perry import db, models
+from perry import db, models, usage
 from perry.agents import knowledge
 
 # Each step is one Supervisor decision (call an Agent, or answer).
@@ -63,7 +63,10 @@ def run_turn(thread_id: str, message: str) -> str:
     graph = supervisor()
     before = graph.get_state(config)
     try:
-        result = graph.invoke({"messages": [{"role": "user", "content": message}]}, config)
+        with usage.turn(thread_id):
+            result = graph.invoke({"messages": [{"role": "user", "content": message}]}, config)
+    except usage.TurnTokenCeilingReached as stop:
+        return _stop_at_ceiling(graph, config, before, message, stop)
     except GraphRecursionError:
         _forget_turn(graph, config, before)
         return (
@@ -92,6 +95,26 @@ def _forget_turn(graph, config: dict, before) -> None:
         graph.update_state(
             config, {"messages": [RemoveMessage(id=m.id) for m in added]}, as_node="model"
         )
+
+
+def _stop_at_ceiling(graph, config: dict, before, message: str, stop) -> str:
+    """End the Turn with the Agents' findings so far, kept in the Thread like an answer."""
+    kept = {m.id for m in before.values.get("messages", [])}
+    findings = [
+        m.text
+        for m in graph.get_state(config).values.get("messages", [])
+        if m.id not in kept and m.type == "tool" and m.text
+    ]
+    reply = f"I stopped because this Turn reached its limit of {stop.ceiling:,} tokens."
+    if findings:
+        reply += " Here is what I found so far:\n\n" + "\n\n".join(findings)
+    else:
+        reply += " I hadn't found anything yet. Try a narrower question."
+    _forget_turn(graph, config, before)
+    graph.update_state(
+        config, {"messages": [HumanMessage(message), AIMessage(reply)]}, as_node="model"
+    )
+    return reply
 
 
 def thread_history(thread_id: str) -> list[dict]:

@@ -34,3 +34,4 @@ Documents can also be uploaded from the UI sidebar. Uploading a file with the sa
 - **Privacy:** on the free tier, Google may use what you send to improve its products. Don't upload anything confidential.
 - **Scanned PDF pages** (no extractable text) are skipped for now and listed after upload. Vision transcription is a later step.
 - **Changing the embedding model** or its dimension means re-ingesting every Document.
+- **Usage:** every model call is recorded with its tokens and cost (the sidebar shows today's totals). Prices live in `prices.toml`; edit it to match current pricing. A Turn stops at `PERRY_TURN_TOKEN_CEILING` tokens (default 50,000) and reports what it found so far. Embedding tokens are estimated (about 4 characters per token), since the Gemini API doesn't report them.
