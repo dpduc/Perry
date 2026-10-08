@@ -85,6 +85,13 @@ class Perry:
             self.thread_id = threads.create(message)
         return supervisor.run_turn(self.thread_id, message, images=list(images))
 
+    def resume(self, decision):
+        """Answer the pending Confirmation (approve, approve with edits, or reject with a
+        note) and return what the Turn shows next: a reply or another Confirmation."""
+        from perry import supervisor
+
+        return supervisor.resume_turn(self.thread_id, decision)
+
     def say(self, audio: bytes) -> "VoiceReply":
         """Run one Turn from recorded speech, as push-to-talk does: the transcription is
         sent as the message, and the reply comes back as text and audio."""
@@ -123,6 +130,16 @@ def perry(database, chat_model, tmp_path):
 
     with models.use(fake_provider(chat_model)):
         yield Perry(chat_model, tmp_path)
+
+
+@pytest.fixture
+def workspace():
+    """An in-memory Workspace that every Turn in the test reads from and acts on."""
+    from perry import workspace
+
+    fake = workspace.InMemoryWorkspace()
+    with workspace.use(fake):
+        yield fake
 
 
 @pytest.fixture

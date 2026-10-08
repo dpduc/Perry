@@ -2,21 +2,11 @@
 
 from datetime import date, datetime, time, timedelta
 
-import pytest
 from fakes import call, last_message
 
 
 def at(day: date, hour: int) -> datetime:
     return datetime.combine(day, time(hour)).astimezone()
-
-
-@pytest.fixture
-def workspace():
-    from perry import workspace
-
-    fake = workspace.InMemoryWorkspace()
-    with workspace.use(fake):
-        yield fake
 
 
 def test_whats_on_tomorrow_lists_tomorrows_events(perry, workspace):

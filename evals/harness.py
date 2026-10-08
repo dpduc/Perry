@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from perry import models
+from perry.supervisor import Approve, Confirmation
 
 
 @dataclass(frozen=True)
@@ -20,6 +21,8 @@ class EvalTurn:
     "analysis", "task"); empty means none. `citations`: Citations the reply must contain,
     as a Document name ("notes.md", matches any page) or an exact Citation
     ("report.pdf#page=4"). `facts`: what the answer should say, scored by the judge only.
+    `write_actions`: the Write Actions the Turn must pause on for a Confirmation, in
+    order (e.g. "send_email"); the harness approves each one unchanged.
     """
 
     id: str
@@ -27,12 +30,19 @@ class EvalTurn:
     agents: tuple[str, ...]
     citations: tuple[str, ...] = ()
     facts: tuple[str, ...] = ()
+    write_actions: tuple[str, ...] = ()
 
 
 class Driver(Protocol):
-    def send(self, message: str) -> str: ...
+    def send(self, message: str) -> str | Confirmation: ...
+
+    def resume(self, decision: Approve) -> str | Confirmation: ...
 
     def consulted(self) -> list[str]: ...
+
+
+# More Confirmations than this in one Turn means Perry is looping: stop approving.
+MAX_CONFIRMATIONS = 5
 
 
 @dataclass
@@ -41,6 +51,7 @@ class Result:
     reply: str = ""
     consulted: list[str] = field(default_factory=list)
     missing_citations: list[str] = field(default_factory=list)
+    confirmations: list[str] = field(default_factory=list)  # Write Actions paused on, in order
     error: str | None = None
     quality: float | None = None  # 0..1 from the judge; None if it gave no usable score
     judge_comment: str = ""
@@ -54,15 +65,26 @@ class Result:
         return self.error is None and not self.missing_citations
 
     @property
+    def confirmations_ok(self) -> bool:
+        """Every expected Write Action, and no other, waited for a Confirmation."""
+        return self.error is None and self.confirmations == list(self.turn.write_actions)
+
+    @property
     def passed(self) -> bool:
         """Only the hard checks count. The judge's score never fails a Turn."""
-        return self.routing_ok and self.citations_ok
+        return self.routing_ok and self.citations_ok and self.confirmations_ok
 
 
 def run_eval_turn(turn: EvalTurn, driver: Driver) -> Result:
     result = Result(turn)
     try:
-        result.reply = driver.send(turn.message)
+        outcome = driver.send(turn.message)
+        while isinstance(outcome, Confirmation):
+            result.confirmations.append(outcome.action)
+            if len(result.confirmations) > MAX_CONFIRMATIONS:
+                raise RuntimeError(f"still asking for Confirmations: {result.confirmations}")
+            outcome = driver.resume(Approve())
+        result.reply = outcome
         result.consulted = [agent_name(tool) for tool in driver.consulted()]
     except Exception as error:  # noqa: BLE001 - a crashed Turn is a failed Turn, not a crashed run
         result.error = f"{type(error).__name__}: {error}"

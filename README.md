@@ -2,7 +2,7 @@
 
 A personal multi-agent assistant. A **Supervisor** delegates each request to specialist **Agents** and answers in a chat UI. Vocabulary: [GLOSSARY.md](GLOSSARY.md). Decisions: [docs/adr/](docs/adr/).
 
-Built so far (step 1 of 6): the **Knowledge Agent**. It answers from your uploaded Documents with page Citations, using hybrid search (pgvector + Postgres full-text) in one local Postgres. Conversations are saved as resumable Threads. The **Task Agent** reads your Google Calendar and Gmail (Read Actions only; Write Actions come later).
+Built so far (step 1 of 6): the **Knowledge Agent**. It answers from your uploaded Documents with page Citations, using hybrid search (pgvector + Postgres full-text) in one local Postgres. Conversations are saved as resumable Threads. The **Task Agent** reads your Google Calendar and Gmail, and sends, replies, schedules, moves or deletes only after you approve (or edit, or reject) a Confirmation card for each Write Action.
 
 ## Setup
 
@@ -36,11 +36,11 @@ uv run python -m evals                   # run them all against the real model
 uv run python -m evals knowledge-aphids  # only Turns whose id starts with this
 ```
 
-Each eval Turn ([evals/turns/](evals/turns/), one file per Agent) says which Agents must be consulted and which Citations the answer must contain; those checks pass or fail the run. An LLM judge also scores answer quality, which is only reported (and logged to the LangSmith project `perry-eval` when tracing is on). The run uses its own `perry_eval` database loaded from [evals/documents/](evals/documents/), and a fake calendar and mailbox ([evals/workspace.py](evals/workspace.py)) instead of Google. It isn't part of `uv run pytest` or the pre-commit hook, because it spends real requests: with pacing, a full run takes about 15 minutes on the free tier.
+Each eval Turn ([evals/turns/](evals/turns/), one file per Agent) says which Agents must be consulted, which Citations the answer must contain and which Write Actions must wait for a Confirmation (the run approves them, against the fake); those checks pass or fail the run. An LLM judge also scores answer quality, which is only reported (and logged to the LangSmith project `perry-eval` when tracing is on). The run uses its own `perry_eval` database loaded from [evals/documents/](evals/documents/), and a fake calendar and mailbox ([evals/workspace.py](evals/workspace.py)) instead of Google. It isn't part of `uv run pytest` or the pre-commit hook, because it spends real requests: with pacing, a full run takes about 15 minutes on the free tier.
 
 ## Connecting Google (Task Agent)
 
-The Task Agent reads your calendar and email (Read Actions only for now). Use a **test Google account containing only fake data**: on the free tier, what Perry reads is sent to Gemini.
+The Task Agent reads your calendar and email freely, and performs Write Actions (send, reply, create, move or delete an event) only after you approve their Confirmation card. A new message cancels a waiting Confirmation; a failed Write Action is reported, never retried. Use a **test Google account containing only fake data**: on the free tier, what Perry reads is sent to Gemini.
 
 1. In [Google Cloud Console](https://console.cloud.google.com/), create a project, enable the **Google Calendar API** and **Gmail API**, and set up the OAuth consent screen (External). Add the scopes `calendar.events`, `gmail.readonly` and `gmail.send`, then **publish the app to production** so sign-ins don't expire after 7 days (an unverified personal app is fine; you click through the warning).
 2. Create an OAuth client of type **Desktop app**, download its JSON and save it as `%APPDATA%\Perry\google_client.json` (or point `PERRY_GOOGLE_CLIENT_FILE` at it). Never put it in the repo.

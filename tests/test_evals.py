@@ -165,3 +165,44 @@ def test_task_turns_run_against_the_eval_workspace_fake(perry):
 
     assert result.passed
     assert "Roadmap review" in result.reply and "Lunch with Priya" in result.reply
+
+
+EMAIL_SAM = EvalTurn(
+    id="task-write-email",
+    message="Email sam@example.com that I'll be 10 minutes late.",
+    agents=("task",),
+    write_actions=("send_email",),
+)
+
+
+def test_write_action_turn_passes_when_it_waits_for_the_confirmation_and_is_approved(
+    perry, workspace
+):
+    perry.script(
+        call("ask_task_agent", request=EMAIL_SAM.message),
+        call("send_email", to="sam@example.com", subject="Late", body="10 minutes late."),
+        last_message,  # after the harness approves: Task Agent reports
+        last_message,  # Supervisor passes it on
+        '{"score": 5, "comment": "Sent."}',
+    )
+
+    result = run_eval_turn(EMAIL_SAM, perry)
+
+    assert result.confirmations == ["send_email"]
+    assert result.passed
+    assert [e.subject for e in workspace.sent] == ["Late"]
+
+
+def test_write_action_turn_that_never_asks_for_a_confirmation_fails(perry, workspace):
+    perry.script(
+        call("ask_task_agent", request=EMAIL_SAM.message),
+        "I can't send email.",
+        "I can't send email.",
+        '{"score": 1, "comment": "Did nothing."}',
+    )
+
+    result = run_eval_turn(EMAIL_SAM, perry)
+
+    assert result.routing_ok
+    assert result.confirmations == []
+    assert not result.passed
