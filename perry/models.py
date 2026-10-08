@@ -187,9 +187,16 @@ def _gemini_read_image(model: ChatGoogleGenerativeAI, image: bytes, mime_type: s
     return Transcription(reply.text.strip(), *_gemini_usage(reply, LLM_MODEL))
 
 
+def tts_options() -> dict:
+    """Keyword arguments for invoking the text-to-speech model with TTS_VOICE. The voice
+    goes in speech_config: a bare `voice_name` is rejected by google-genai."""
+    voice = {"prebuilt_voice_config": {"voice_name": TTS_VOICE}}
+    return {"generation_config": {"speech_config": {"voice_config": voice}}}
+
+
 def _gemini_synthesize(model: ChatGoogleGenerativeAI, text: str) -> Speech:
     # A "-tts" model answers with WAV bytes (24 kHz mono) in additional_kwargs["audio"].
-    reply = model.invoke(text, voice_name=TTS_VOICE)
+    reply = model.invoke(text, **tts_options())
     wav = reply.additional_kwargs.get("audio")
     if not wav:
         raise RuntimeError(f"{TTS_MODEL} returned no audio")

@@ -114,3 +114,18 @@ def test_answer_is_not_read_aloud_once_the_turn_reaches_the_daily_cap(
     assert reply.audio is None
     assert "today's budget" in reply.note
     assert usage.today("text_to_speech").tokens == 0
+
+
+def test_the_gemini_text_to_speech_request_carries_the_configured_voice():
+    """Builds the real library request offline: the fakes elsewhere can't see whether
+    langchain-google-genai accepts how the voice is passed."""
+    from langchain_core.messages import HumanMessage
+    from langchain_google_genai import ChatGoogleGenerativeAI
+
+    from perry import models
+
+    tts = ChatGoogleGenerativeAI(model=models.TTS_MODEL, api_key="offline")
+    request = tts._prepare_request([HumanMessage("Hello.")], **models.tts_options())
+
+    voice = request["config"].speech_config.voice_config.prebuilt_voice_config
+    assert voice.voice_name == models.TTS_VOICE
