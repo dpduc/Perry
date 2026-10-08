@@ -72,7 +72,15 @@ def google_needs_reconnecting():
     return workspace.expired()
 
 
-@pytest.mark.parametrize("stop", [ceiling_reached, google_needs_reconnecting])
+def privacy_refusal():
+    from perry import privacy
+
+    return privacy.Refused("The Task Agent is off.")
+
+
+@pytest.mark.parametrize(
+    "stop", [ceiling_reached, google_needs_reconnecting, privacy_refusal]
+)
 def test_deliberate_stops_end_the_turn_instead_of_being_retried_or_reported(stop):
     runs = []
 

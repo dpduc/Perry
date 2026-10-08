@@ -86,6 +86,9 @@ class Provider:
     # Speech, if the provider has it: (audio bytes, MIME type) -> text, and text -> WAV.
     transcribe: Callable[[bytes, str], Transcription] | None = None
     synthesize: Callable[[str], Speech] | None = None
+    # True only when chat (text generation) runs on this machine, so nothing the
+    # Agents read leaves it. Embeddings may still be remote: they never see email.
+    local_text_generation: bool = False
 
 
 @cache
@@ -187,6 +190,11 @@ def use(provider: Provider) -> Iterator[Provider]:
         yield provider
     finally:
         _override = previous
+
+
+def text_generation_is_local() -> bool:
+    """Whether the configured text-generation provider runs locally (Gemini doesn't)."""
+    return _provider().local_text_generation
 
 
 def chat_model() -> BaseChatModel:

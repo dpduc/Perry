@@ -130,7 +130,8 @@ def fake_synthesize(text: str) -> Speech:
     return Speech(spoken(text), "fake-tts", 10, 200)
 
 
-def fake_provider(chat: ScriptedChatModel, *, speech: bool = True) -> Provider:
+def fake_provider(chat: ScriptedChatModel, *, speech: bool = True, local: bool = False) -> Provider:
+    """Fake models; `local=True` makes text generation count as local (for privacy checks)."""
     return Provider(
         chat_model=lambda: chat,
         embed_documents=fake_embed,
@@ -138,4 +139,5 @@ def fake_provider(chat: ScriptedChatModel, *, speech: bool = True) -> Provider:
         embedding_model="fake-embedding",
         transcribe=fake_transcribe if speech else None,
         synthesize=fake_synthesize if speech else None,
+        local_text_generation=local,
     )

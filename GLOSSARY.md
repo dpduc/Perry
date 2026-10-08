@@ -73,6 +73,9 @@ _Avoid_: Code interpreter, executor, container (when talking to users)
 Your calendar and email as Perry sees them, through one connected Google account. The Task Agent reaches them only through the Workspace, never Google directly. Email threads in the Workspace are "email threads", never Threads.
 _Avoid_: Google, account, integration (when meaning the calendar and email)
 
+**Test account** / **Real account**:
+What you declare the connected Google account to be when connecting it: a test account holds only fake data; a real one is yours. A real account is refused unless text generation is local, and is never traced.
+
 **Read Action**:
 An action on calendar or email that only looks, such as listing events or fetching messages. Runs without asking.
 
