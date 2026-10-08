@@ -6,3 +6,17 @@
 - **Knowledge Agent interface** stays retrieval-agnostic (question in, cited findings out). See `docs/adr/0001`.
 - **Library APIs**: langchain 1.x / langgraph 1.x / gradio 6.x differ a lot from older tutorials. Verify signatures against `.venv/Lib/site-packages`.
 - **Checks**: `uv run pytest` (DB tests need `docker compose up -d`; they use a separate `perry_test` database) and `uv run ruff check .`
+
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked in GitHub Issues for `dpduc/Perry` via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
