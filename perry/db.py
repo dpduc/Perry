@@ -1,10 +1,11 @@
-"""The one Postgres database: Documents, Chunks, Threads and LangGraph checkpoints."""
+"""The one Postgres database: Documents, Chunks, Threads, Datasets and LangGraph checkpoints."""
 
 import os
 from functools import cache
 
 from pgvector.psycopg import register_vector
-from psycopg import Connection
+from psycopg import Connection, sql
+from psycopg.conninfo import make_conninfo
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
@@ -38,6 +39,39 @@ CREATE TABLE IF NOT EXISTS threads (
     title      text NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- Datasets are real tables in the analytics schema; this is their registry.
+CREATE SCHEMA IF NOT EXISTS analytics;
+CREATE TABLE IF NOT EXISTS datasets (
+    name        text PRIMARY KEY,
+    origin      text NOT NULL,
+    columns     jsonb NOT NULL,
+    row_count   bigint NOT NULL,
+    uploaded_at timestamptz NOT NULL DEFAULT now()
+);
+"""
+
+# The Analysis Agent's SQL runs as this role. Postgres, not the prompt, keeps it
+# read-only and inside the analytics schema. Roles are cluster-wide (shared by the
+# main and test databases); grants are per database, so both are (re)applied here.
+ANALYST_ROLE = "perry_analyst"
+ANALYST_PASSWORD = os.getenv("PERRY_ANALYST_PASSWORD", "perry_analyst")
+
+ANALYST_ROLE_SQL = """
+DO $$ BEGIN
+    CREATE ROLE {role} LOGIN;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+ALTER ROLE {role} PASSWORD {password};
+ALTER ROLE {role} SET default_transaction_read_only = on;
+ALTER ROLE {role} SET search_path = analytics;
+-- Temporary tables would be writable by anyone; nothing in Perry uses them.
+DO $$ BEGIN
+    EXECUTE format('REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC', current_database());
+END $$;
+GRANT USAGE ON SCHEMA analytics TO {role};
+GRANT SELECT ON ALL TABLES IN SCHEMA analytics TO {role};
+ALTER DEFAULT PRIVILEGES IN SCHEMA analytics GRANT SELECT ON TABLES TO {role};
 """
 
 
@@ -67,3 +101,17 @@ def init_schema() -> None:
     with pool().connection() as conn:
         # Several statements in one string can only run unprepared.
         conn.execute(SCHEMA, prepare=False)
+        role_sql = sql.SQL(ANALYST_ROLE_SQL).format(
+            role=sql.Identifier(ANALYST_ROLE), password=sql.Literal(ANALYST_PASSWORD)
+        )
+        conn.execute(role_sql, prepare=False)
+
+
+def analyst_conninfo(statement_timeout_ms: int) -> str:
+    """Connection string for the read-only analyst role, with a statement timeout."""
+    return make_conninfo(
+        DATABASE_URL,
+        user=ANALYST_ROLE,
+        password=ANALYST_PASSWORD,
+        options=f"-c statement_timeout={int(statement_timeout_ms)}",
+    )

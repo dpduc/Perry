@@ -24,6 +24,8 @@ uv run python -m perry.ingest some\folder  # bulk-load Documents (.pdf, .md, .tx
 
 Documents can also be uploaded from the UI sidebar. Uploading a file with the same name replaces the old version.
 
+**Datasets** (CSV, or XLSX with one Dataset per sheet) are uploaded from the sidebar's Datasets section, which lists each Dataset with its columns. Uploading a file with an existing Dataset name replaces it. The **Analysis Agent** answers questions about Datasets with SQL and shows the query it ran. That SQL runs as a separate Postgres role (`perry_analyst`) that can only read the `analytics` schema, with a statement timeout and a row limit.
+
 ## Notes
 
 - **Speed on the free tier:** Gemini Flash allows 5 requests/minute, and Perry paces itself to 4. A Turn makes 3-6 model calls, so expect about 1-2 minutes per answer.
