@@ -316,7 +316,7 @@ def _final_answer(messages: list) -> str:
     results = agent_results(messages)
     answer = charts.keep(messages[-1].text, [m.text for m in results])
     findings = [m.text for m in results if m.name == ask_knowledge_agent.name]
-    return knowledge.keep_citations(answer, findings)
+    return knowledge.citations_at_end(answer, findings)
 
 
 def _confirmation(request: dict) -> Confirmation:

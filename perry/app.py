@@ -177,6 +177,21 @@ def new_thread():
     return [], None, gr.update(value=None), *confirmation_card(None)
 
 
+def thread_choices():
+    """The Thread picker's list as it is now (the page may have been built long ago)."""
+    return gr.update(choices=threads.list_recent())
+
+
+def lock_threads():
+    """While a Turn runs, the New thread button and Thread picker are off: a Turn that
+    finished after a switch would otherwise write its Thread over the one being shown."""
+    return gr.update(interactive=False), gr.update(interactive=False)
+
+
+def unlock_threads():
+    return gr.update(interactive=True), gr.update(interactive=True)
+
+
 def propose_upload(files: list[str] | None):
     """Show what ingesting the uploaded files would cost, and wait for the user's OK."""
     if not files:
@@ -338,27 +353,33 @@ def build(privacy_notice: str = "") -> gr.Blocks:
             """After anything that may call a model or the Workspace, refresh the sidebar."""
             return event.then(sidebar_status, None, status_outputs)
 
+        switching = [new_button, thread_picker]
+
+        def during_turn(event):
+            """Lock Thread switching from `event` until the Turn's chain ends, then refresh
+            the sidebar. `.then` (not `.success`) so a failed Turn still unlocks."""
+            return then_refresh_status(event.then(unlock_threads, None, switching))
+
         answer_outputs = [chatbot, thread_id, thread_picker, *card_outputs]
-        then_refresh_status(
-            box.submit(show_user_message, [box, chatbot], [pending, chatbot, box]).then(
-                answer, [pending, chatbot, thread_id], answer_outputs
-            )
+        during_turn(
+            box.submit(lock_threads, None, switching)
+            .then(show_user_message, [box, chatbot], [pending, chatbot, box])
+            .then(answer, [pending, chatbot, thread_id], answer_outputs)
         )
         box.submit(lambda: None, None, voice_turn)
-        then_refresh_status(
-            mic.stop_recording(
-                hear, [mic, chatbot, thread_id], [pending, chatbot, mic, voice_turn]
-            )
+        during_turn(
+            mic.stop_recording(lock_threads, None, switching)
+            .then(hear, [mic, chatbot, thread_id], [pending, chatbot, mic, voice_turn])
             .then(answer, [pending, chatbot, thread_id, voice_turn], answer_outputs)
             .then(read_aloud, [voice_turn, chatbot, thread_id], speaker)
         )
-        then_refresh_status(
-            approve_button.click(
+        during_turn(
+            approve_button.click(lock_threads, None, switching).then(
                 approve, [thread_id, waiting, chatbot, *card_fields], [chatbot, *card_outputs]
             )
         )
-        then_refresh_status(
-            reject_button.click(
+        during_turn(
+            reject_button.click(lock_threads, None, switching).then(
                 reject, [thread_id, waiting, chatbot, card_note], [chatbot, *card_outputs]
             )
         )
@@ -375,6 +396,7 @@ def build(privacy_notice: str = "") -> gr.Blocks:
             upload_datasets, dataset_uploader, [dataset_status, datasets_shown]
         )
         demo.load(sidebar_status, None, status_outputs)
+        demo.load(thread_choices, None, thread_picker)
         demo.load(lambda: privacy_notice, None, google_status)
         google.click(connect_google, account_kind, [google, google_status])
     return demo

@@ -21,7 +21,8 @@ def test_step_that_fails_once_then_succeeds_gives_a_normal_answer(perry):
 
     reply = perry.send("How big is my Q3 marketing budget?")
 
-    assert reply.startswith("[budget.md]\nThe marketing budget for Q3 is 40,000 dollars.")
+    assert reply.startswith("The marketing budget for Q3 is 40,000 dollars.")
+    assert reply.endswith("Citations: [budget.md]")
     assert perry.consulted() == ["ask_knowledge_agent"]
 
 
@@ -53,7 +54,8 @@ def two_step_turn_where_the_second_step_fails_twice(perry):
 def test_step_that_fails_twice_is_named_and_the_other_results_are_kept(perry):
     reply = two_step_turn_where_the_second_step_fails_twice(perry)
 
-    assert "The Q3 marketing budget is 40,000 dollars [budget.md]." in reply
+    assert "The Q3 marketing budget is 40,000 dollars." in reply
+    assert reply.endswith("Citations: [budget.md]")
     assert "ask_knowledge_agent(question='Is the ridge path steep?') failed twice" in reply
     assert perry.consulted() == ["ask_knowledge_agent", "ask_knowledge_agent"]
 

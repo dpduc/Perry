@@ -184,7 +184,7 @@ def test_chained_turn_pauses_at_the_write_action_in_the_middle(perry, workspace)
     assert "Revenue grew 12%" in pending.summary
     assert workspace.sent == []
 
-    # The Supervisor's answer drops the Citation; it comes back all the same.
+    # The Supervisor's answer drops the Citation; it comes back all the same, at the end.
     perry.script(last_message, "Done: I emailed Sam the Q3 summary.")
     reply = perry.resume(Approve())
 

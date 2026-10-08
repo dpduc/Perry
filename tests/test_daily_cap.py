@@ -38,7 +38,7 @@ def test_turn_that_crosses_the_daily_cap_midway_finishes(perry, cap):
 
     reply = perry.send("How big is my Q3 marketing budget?")
 
-    assert reply == "The Q3 marketing budget is 40,000 dollars [budget.md]."
+    assert reply == "The Q3 marketing budget is 40,000 dollars.\n\nCitations: [budget.md]"
     assert perry.send("And for Q4?").startswith("Perry has used today's budget of $0.01")
 
 

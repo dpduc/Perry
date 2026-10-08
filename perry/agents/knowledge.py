@@ -53,13 +53,22 @@ def ask(question: str) -> str:
 _CITATION = re.compile(r"\[[^\[\]\n]+\]")
 
 
-def keep_citations(answer: str, findings: list[str]) -> str:
-    """`answer` with every Citation in `findings` that it left out added on a last line.
+def citations_at_end(answer: str, findings: list[str]) -> str:
+    """`answer` with every Citation in `findings` moved to a last line, so they don't
+    interrupt the reading. Citations the answer used come first, then any it left out.
 
     Code, not the prompt, makes sure an answer built on the findings keeps their Citations.
+    Only Citations the findings gave are moved; other brackets (links, chart markers) stay.
     """
-    missing = []
-    for found in (c for text in findings for c in _CITATION.findall(text)):
-        if found not in answer and found not in missing:
-            missing.append(found)
-    return f"{answer.rstrip()}\n\nCitations: {' '.join(missing)}" if missing else answer
+    known = list(dict.fromkeys(c for text in findings for c in _CITATION.findall(text)))
+    if not known:
+        return answer
+    used = sorted((c for c in known if c in answer), key=answer.index)
+    body = answer
+    for found in known:
+        body = re.sub(rf"[ \t]*{re.escape(found)}", "", body)
+    # Tidy what removal leaves: lines now empty, and space left before punctuation.
+    body = re.sub(r"\n[ \t]*\n(?:[ \t]*\n)+", "\n\n", body)
+    body = re.sub(r"(?m)^[ \t]+$", "", body).strip()
+    cited = used + [c for c in known if c not in used]
+    return f"{body}\n\nCitations: {' '.join(cited)}"
