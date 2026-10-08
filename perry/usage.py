@@ -29,6 +29,7 @@ log = logging.getLogger(__name__)
 
 DEFAULT_PRICES_FILE = Path(__file__).resolve().parent.parent / "prices.toml"
 DEFAULT_TURN_TOKEN_CEILING = 50_000
+DEFAULT_DAILY_CAP_USD = 1.0
 
 
 @dataclass(frozen=True)
@@ -41,6 +42,17 @@ class Usage:
 class Turn:
     thread_id: str
     id: str
+
+
+class DailyCapReached(Exception):
+    """Today's usage has reached the daily cap; nothing new may start until local midnight."""
+
+    def __init__(self, cap_usd: float):
+        super().__init__(
+            f"Perry has used today's budget of ${cap_usd:.2f}, so it can't take new requests "
+            "until the budget resets at midnight."
+        )
+        self.cap_usd = cap_usd
 
 
 class TurnTokenCeilingReached(Exception):
@@ -81,6 +93,26 @@ def check_turn_ceiling() -> None:
     ceiling = turn_token_ceiling()
     if turn_tokens(current.id) >= ceiling:
         raise TurnTokenCeilingReached(ceiling)
+
+
+def daily_cap_usd() -> float:
+    return float(os.getenv("PERRY_DAILY_CAP_USD", str(DEFAULT_DAILY_CAP_USD)))
+
+
+def remaining_today() -> float:
+    """USD left under the daily cap today (never below 0)."""
+    return max(0.0, daily_cap_usd() - today().cost_usd)
+
+
+def check_daily_cap() -> None:
+    """Raise DailyCapReached if today's usage has reached the daily cap.
+
+    Checked before starting something new (a Turn), never during it, so a Turn
+    that is already running always finishes. Anything that calls a model before
+    the Turn starts (e.g. transcribing a voice request) must check it first too.
+    """
+    if remaining_today() <= 0:
+        raise DailyCapReached(daily_cap_usd())
 
 
 def record(kind: str, model: str, input_tokens: int, output_tokens: int = 0) -> None:

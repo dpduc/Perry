@@ -85,6 +85,10 @@ def supervisor():
 
 def run_turn(thread_id: str, message: str, images: list[str | Path] = ()) -> str:
     """Answer `message`, with any attached image files given to the model as well."""
+    try:
+        usage.check_daily_cap()
+    except usage.DailyCapReached as refused:
+        return str(refused)
     request = user_message(message, images)
     config = {
         "configurable": {"thread_id": thread_id},

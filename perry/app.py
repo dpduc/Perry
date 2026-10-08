@@ -4,8 +4,7 @@ from pathlib import Path
 
 import gradio as gr
 
-from perry import datasets, db, google_auth, models, threads, usage, workspace
-from perry.ingest import ingest_file
+from perry import datasets, db, google_auth, ingest, models, threads, usage, workspace
 from perry.supervisor import run_turn, thread_history
 
 EMPTY = {"text": "", "files": []}
@@ -82,16 +81,31 @@ def new_thread():
     return [], None, gr.update(value=None)
 
 
-def upload(files: list[str] | None) -> str:
+def propose_upload(files: list[str] | None):
+    """Show what ingesting the uploaded files would cost, and wait for the user's OK."""
     if not files:
-        return gr.skip()
-    lines = []
-    for file in files:
-        try:
-            lines.append(ingest_file(Path(file)).describe())
-        except Exception as error:  # noqa: BLE001 - report per file, keep going with the rest
-            lines.append(f"{Path(file).name}: failed ({error})")
-    return "\n".join(f"- {line}" for line in lines)
+        return gr.skip(), gr.skip(), gr.skip()
+    estimate = ingest.estimate_ingestion([Path(file) for file in files])
+    try:
+        ingest.check_budget(estimate)
+    except ingest.OverBudget as refused:
+        return [], str(refused), gr.update(visible=False)
+    if not estimate.tokens:
+        # Nothing to pay for (e.g. every file is unchanged): no need to ask.
+        return [], *ingest_upload(files)
+    return files, f"{estimate.describe()} Ingest now?", gr.update(visible=True)
+
+
+def ingest_upload(files: list[str]):
+    try:
+        results = ingest.ingest_files([Path(file) for file in files])
+    except ingest.OverBudget as refused:
+        return str(refused), gr.update(visible=False)
+    return "\n".join(f"- {r.describe()}" for r in results), gr.update(visible=False)
+
+
+def cancel_upload():
+    return [], "Nothing ingested.", gr.update(visible=False)
 
 
 def upload_datasets(files: list[str] | None) -> tuple[str, str]:
@@ -115,7 +129,10 @@ def dataset_list() -> str:
 
 def todays_usage() -> str:
     today = usage.today()
-    return f"Today: {today.tokens:,} tokens · ${today.cost_usd:.4f}"
+    return (
+        f"Today: {today.tokens:,} tokens · ${today.cost_usd:.4f} "
+        f"of ${usage.daily_cap_usd():.2f}"
+    )
 
 
 GOOGLE_BUTTON = {
@@ -157,6 +174,10 @@ def build() -> gr.Blocks:
                 file_count="multiple", file_types=[".pdf", ".md", ".txt"], label="Upload"
             )
             upload_status = gr.Markdown()
+            uploaded = gr.State([])  # files waiting for the user's OK to ingest
+            with gr.Row(visible=False) as upload_choice:
+                ingest_button = gr.Button("Ingest", variant="primary", size="sm")
+                cancel_button = gr.Button("Cancel", size="sm")
             gr.Markdown("### Datasets")
             dataset_uploader = gr.File(
                 file_count="multiple", file_types=[".csv", ".xlsx"], label="Upload data"
@@ -197,7 +218,13 @@ def build() -> gr.Blocks:
         ).then(google_button, None, google)
         thread_picker.input(open_thread, thread_picker, [chatbot, thread_id])
         new_button.click(new_thread, None, [chatbot, thread_id, thread_picker])
-        uploader.upload(upload, uploader, upload_status).then(todays_usage, None, usage_status)
+        uploader.upload(
+            propose_upload, uploader, [uploaded, upload_status, upload_choice]
+        ).then(todays_usage, None, usage_status)
+        ingest_button.click(
+            ingest_upload, uploaded, [upload_status, upload_choice]
+        ).then(todays_usage, None, usage_status)
+        cancel_button.click(cancel_upload, None, [uploaded, upload_status, upload_choice])
         dataset_uploader.upload(
             upload_datasets, dataset_uploader, [dataset_status, datasets_shown]
         )

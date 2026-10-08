@@ -19,7 +19,7 @@ docker compose up -d --wait          # Postgres + pgvector on 127.0.0.1:5433
 
 ```powershell
 uv run python -m perry.app              # chat UI at http://127.0.0.1:7860
-uv run python -m perry.ingest some\folder  # bulk-load Documents (.pdf, .md, .txt)
+uv run python -m perry.ingest some\folder  # bulk-load Documents (.pdf, .md, .txt); shows the estimated cost and asks first (--yes skips the question)
 ```
 
 Documents can also be uploaded from the UI sidebar. Uploading a file with the same name replaces the old version.
@@ -60,4 +60,4 @@ Manual check against the test account: add a few events for tomorrow and a few e
 - **Privacy:** on the free tier, Google may use what you send to improve its products. Don't upload anything confidential.
 - **Scanned PDF pages** (no extractable text) are skipped for now and listed after upload. Vision transcription is a later step.
 - **Changing the embedding model** or its dimension means re-ingesting every Document.
-- **Usage:** every model call is recorded with its tokens and cost (the sidebar shows today's totals). Prices live in `prices.toml`; edit it to match current pricing. A Turn stops at `PERRY_TURN_TOKEN_CEILING` tokens (default 50,000) and reports what it found so far. Embedding tokens are estimated (about 4 characters per token), since the Gemini API doesn't report them.
+- **Usage:** every model call is recorded with its tokens and cost (the sidebar shows today's totals). Prices live in `prices.toml`; edit it to match current pricing. A Turn stops at `PERRY_TURN_TOKEN_CEILING` tokens (default 50,000) and reports what it found so far. Embedding tokens are estimated (about 4 characters per token), since the Gemini API doesn't report them. Once today's cost reaches `PERRY_DAILY_CAP_USD` (default $1), new Turns are refused until local midnight; a Turn already running always finishes. Uploads count toward the cap too: they show an estimate and wait for your OK, and are refused up front if they would go over.
