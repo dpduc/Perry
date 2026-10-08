@@ -26,6 +26,8 @@ Documents can also be uploaded from the UI sidebar. Uploading a file with the sa
 
 **Datasets** (CSV, or XLSX with one Dataset per sheet) are uploaded from the sidebar's Datasets section, which lists each Dataset with its columns. Uploading a file with an existing Dataset name replaces it. The **Analysis Agent** answers questions about Datasets with SQL and shows the query it ran. That SQL runs as a separate Postgres role (`perry_analyst`) that can only read the `analytics` schema, with a statement timeout and a row limit.
 
+Push to talk: record with the microphone under the chat box and stop to send. Perry shows the transcription as your message and reads its answer aloud (text-to-speech model: `PERRY_TTS_MODEL`). Speech counts toward usage like any other model call.
+
 ## Connecting Google (Task Agent)
 
 The Task Agent reads your calendar and email (Read Actions only for now). Use a **test Google account containing only fake data**: on the free tier, what Perry reads is sent to Gemini.
