@@ -87,3 +87,21 @@ def test_a_failing_script_reports_its_error(sandbox_image):
     assert not result.ok
     assert "ZeroDivisionError" in result.error
     assert "before" in result.output
+
+
+def test_files_linked_from_outside_the_work_dir_do_not_come_back(sandbox_image, tmp_path):
+    secret = tmp_path / "host-secret.csv"
+    secret.write_text("host,secret\nvalue,42\n", encoding="utf-8")
+    code = f"""
+import os
+os.symlink({str(secret)!r}, "leak.csv")
+os.symlink({secret.as_posix()!r}, "leak2.csv")
+os.symlink({str(tmp_path)!r}, "outside")
+os.symlink({tmp_path.as_posix()!r}, "outside2")
+print(sorted(os.listdir(".")))
+"""
+    result = sandbox.run(code)
+
+    assert result.ok, result.error
+    assert "leak.csv" in result.output  # the links were made
+    assert result.tables == {}  # the host file did not come back

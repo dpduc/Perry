@@ -4,6 +4,8 @@ Interface (keep it retrieval-method agnostic, see docs/adr/0001): question in,
 cited findings out.
 """
 
+import re
+
 from langchain.agents import create_agent
 from langchain_core.tools import tool
 
@@ -45,3 +47,19 @@ def knowledge_agent():
 def ask(question: str) -> str:
     result = knowledge_agent().invoke({"messages": [{"role": "user", "content": question}]})
     return result["messages"][-1].text
+
+
+# A Citation as the findings give it, e.g. [report.pdf#page=4].
+_CITATION = re.compile(r"\[[^\[\]\n]+\]")
+
+
+def keep_citations(answer: str, findings: list[str]) -> str:
+    """`answer` with every Citation in `findings` that it left out added on a last line.
+
+    Code, not the prompt, makes sure an answer built on the findings keeps their Citations.
+    """
+    missing = []
+    for found in (c for text in findings for c in _CITATION.findall(text)):
+        if found not in answer and found not in missing:
+            missing.append(found)
+    return f"{answer.rstrip()}\n\nCitations: {' '.join(missing)}" if missing else answer

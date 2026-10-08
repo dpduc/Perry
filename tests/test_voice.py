@@ -1,7 +1,7 @@
 """Voice: push-to-talk Turns, with fake speech-to-text and text-to-speech."""
 
 import pytest
-from fakes import spoken, with_usage
+from fakes import call, spoken, with_usage
 
 
 def test_voice_request_is_shown_as_the_users_message_and_answered_in_text_and_audio(perry):
@@ -64,7 +64,7 @@ def test_voice_request_after_the_daily_cap_is_refused_without_transcribing(
     recording = tmp_path / "request.wav"
     recording.write_bytes(spoken("How big is my Q3 marketing budget?"))
 
-    message, history, _, read_aloud = app.hear(str(recording), [])
+    message, history, _, voice_turn = app.hear(str(recording), [], perry.thread_id)
 
     assert message == {"text": "", "files": []}  # nothing is sent as a Turn
     assert history == [
@@ -74,5 +74,43 @@ def test_voice_request_after_the_daily_cap_is_refused_without_transcribing(
             "requests until the budget resets at midnight.",
         }
     ]
-    assert not read_aloud
+    assert voice_turn is None  # so the refusal isn't read aloud
     assert usage.today().tokens == used  # no speech-to-text call was made
+
+
+def test_speech_to_text_counts_toward_the_voice_turns_token_ceiling(perry, monkeypatch):
+    monkeypatch.setenv("PERRY_TURN_TOKEN_CEILING", "1000")
+    # 50 tokens to transcribe, then 960 here: the Knowledge Agent's call is over the ceiling.
+    perry.script(with_usage(call("ask_knowledge_agent", question="Q3 budget?"), 960))
+
+    reply = perry.say(spoken("How big is my Q3 budget?"))
+
+    assert reply.text.startswith("I stopped because this Turn reached its limit of 1,000 tokens.")
+
+
+def test_answer_is_not_read_aloud_past_the_voice_turns_token_ceiling(perry, monkeypatch):
+    monkeypatch.setenv("PERRY_TURN_TOKEN_CEILING", "1000")
+    perry.script(with_usage("Hi! How can I help?", 960))  # with transcribing: 1,010 tokens
+
+    reply = perry.say(spoken("Hello"))
+
+    assert reply.text == "Hi! How can I help?"
+    assert reply.audio is None
+    assert "limit of 1,000 tokens" in reply.note
+
+
+def test_answer_is_not_read_aloud_once_the_turn_reaches_the_daily_cap(
+    perry, prices, monkeypatch
+):
+    from perry import usage
+
+    prices({"scripted": {"input": 1.0, "output": 1.0}})
+    monkeypatch.setenv("PERRY_DAILY_CAP_USD", "0.01")
+    perry.script(with_usage("Hi! How can I help?", 10_000))  # $0.01: the whole cap
+
+    reply = perry.say(spoken("Hello"))
+
+    assert reply.text == "Hi! How can I help?"  # the text answer is kept
+    assert reply.audio is None
+    assert "today's budget" in reply.note
+    assert usage.today("text_to_speech").tokens == 0

@@ -145,14 +145,26 @@ def _run_container(tag: str, code: str, workdir: Path, time_limit_s: float) -> _
 
 def _collect(finished: _Finished, workdir: Path, inputs: set[str]) -> Result:
     charts, tables = [], {}
+    root = workdir.resolve()
     for path in sorted(workdir.rglob("*")):
-        if not path.is_file() or path.name in inputs:
+        if path.name in inputs or not _own_file(path, root):
             continue
         if path.suffix.lower() == ".png":
             charts.append(path.read_bytes())
         elif path.suffix.lower() == ".csv":
             tables[path.name] = _text(path.read_bytes())
     return Result(finished.output, finished.error, charts, tables)
+
+
+def _own_file(path: Path, root: Path) -> bool:
+    """A regular file the script saved in the work dir: never a link, nor anything a
+    link leads to, since the script could point one at a file on the host."""
+    try:
+        if path.is_symlink() or not path.is_file():
+            return False
+        return path.resolve(strict=True).is_relative_to(root)
+    except OSError:  # e.g. a link Windows can't follow
+        return False
 
 
 def _text(raw: bytes) -> str:

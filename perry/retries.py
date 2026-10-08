@@ -18,7 +18,7 @@ Mark the tool with `never_retry` where it is defined:
     def send_email(...): ...
 
 A marked tool runs at most once per call; a transient failure is reported
-straight away. Use it for every Write Action (a Confirmation covers a single
+straight away, as having an unknown outcome (it may have acted before failing). Use it for every Write Action (a Confirmation covers a single
 attempt) and for any Agent tool whose run may include a Write Action, since
 retrying it would repeat the Agent's run. The mark lives on the tool, so the
 rule holds wherever the tool is used with `RetryFailedSteps`.
@@ -73,10 +73,21 @@ class RetryFailedSteps(AgentMiddleware):
 def _failure_report(tool_call: dict, error: Exception, attempts: int) -> ToolMessage:
     tried = "twice" if attempts == 2 else "once"
     args = ", ".join(f"{k}={v!r}" for k, v in tool_call["args"].items())
+    if attempts == 1:  # never retried
+        # e.g. an Agent whose run may include a Write Action: it may have happened.
+        outcome = (
+            "Its outcome is unknown: any approved Write Action may already have been "
+            "performed. Tell the user this step failed and to check whether it was "
+            "done before asking again; do not guess what it did."
+        )
+    else:
+        outcome = (
+            "It produced no result. Tell the user this step failed; do not guess what "
+            "it would have returned."
+        )
     return ToolMessage(
         f"FAILED: the step {tool_call['name']}({args}) failed {tried} "
-        f"({type(error).__name__}: {error}). It produced no result. Tell the user this "
-        "step failed; do not guess what it would have returned.",
+        f"({type(error).__name__}: {error}). {outcome}",
         tool_call_id=tool_call["id"],
         name=tool_call["name"],
         status="error",

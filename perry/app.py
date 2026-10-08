@@ -14,6 +14,7 @@ from perry import (
     privacy,
     threads,
     usage,
+    voice,
     workspace,
 )
 from perry.supervisor import (
@@ -55,15 +56,18 @@ def show_user_message(message: dict, history: list[dict]):
     return {"text": text, "files": images}, [*history, *shown], EMPTY
 
 
-def answer(message: dict, history: list[dict], thread_id: str | None):
-    """Run the Turn. Outputs: chat, Thread, Thread picker, then `show()`'s card outputs."""
+def answer(
+    message: dict, history: list[dict], thread_id: str | None, voice_turn: str | None = None
+):
+    """Run the Turn (`voice_turn` when the request came by voice). Outputs: chat,
+    Thread, Thread picker, then `show()`'s card outputs."""
     text, images = message.get("text", ""), message.get("files", [])
     if not text.strip() and not images:
-        return history, thread_id, gr.skip(), *[gr.skip()] * (2 + len(CARD_FIELDS) + 2)
+        return history, thread_id, gr.skip(), *[gr.skip() for _ in confirmation_card(None)]
     if thread_id is None:
         thread_id = threads.create(text)
     # A pending Confirmation is cancelled by this message; the reply says so.
-    outcome = run_turn(thread_id, text, images=images)
+    outcome = run_turn(thread_id, text, images=images, turn_id=voice_turn)
     history, *card = show(outcome, history)
     picker = gr.update(choices=threads.list_recent(), value=thread_id)
     return history, thread_id, picker, *card
@@ -113,38 +117,41 @@ def reject(thread_id: str | None, waiting: Confirmation | None, history: list[di
     return show(resume_turn(thread_id, Reject(note.strip())), history)
 
 
-def hear(recording: str | None, history: list[dict]):
-    """Push-to-talk: transcribe the recording and show it as the user's message."""
+def hear(recording: str | None, history: list[dict], thread_id: str | None):
+    """Push-to-talk: transcribe the recording and show it as the user's message.
+    Outputs: message, chat, recorder, and the voice Turn (None if nothing is sent)."""
     if not recording:
-        return gr.skip(), history, None, False
+        return gr.skip(), history, None, None
+    turn_id = voice.new_turn()
     try:
-        usage.check_daily_cap()  # transcribing is a model call, so it waits for the cap too
+        transcript = voice.transcribe(Path(recording).read_bytes(), thread_id, turn_id)
     except usage.DailyCapReached as refused:
-        return EMPTY, [*history, {"role": "assistant", "content": str(refused)}], None, False
-    try:
-        transcript = models.transcribe(Path(recording).read_bytes(), "audio/wav")
+        return EMPTY, [*history, {"role": "assistant", "content": str(refused)}], None, None
     except Exception as error:  # noqa: BLE001 - tell the user, keep the UI usable
         gr.Warning(f"Couldn't transcribe the recording: {error}")
-        return EMPTY, history, None, False
+        return EMPTY, history, None, None
     if not transcript.strip():
         gr.Warning("I didn't catch anything. Hold the button and speak, then release.")
-        return EMPTY, history, None, False
+        return EMPTY, history, None, None
     message = {"text": transcript, "files": []}
-    return message, [*history, {"role": "user", "content": transcript}], None, True
+    return message, [*history, {"role": "user", "content": transcript}], None, turn_id
 
 
-def read_aloud(spoken: bool, history: list[dict]):
-    """Speak the latest answer, only when the request came by voice."""
-    if not spoken or not history or history[-1]["role"] != "assistant":
+def read_aloud(turn_id: str | None, history: list[dict], thread_id: str | None):
+    """Speak the latest answer, only when the request came by voice (as Turn `turn_id`)."""
+    if turn_id is None or not history or history[-1]["role"] != "assistant":
         return None
     text = _text(history[-1]["content"])
     if not text:
         return None
     try:
-        return models.synthesize(text)
+        speech = voice.read_aloud(text, thread_id, turn_id)
     except Exception as error:  # noqa: BLE001 - the text answer is already shown
         gr.Warning(f"Couldn't read the answer aloud: {error}")
         return None
+    if speech.note:
+        gr.Warning(speech.note)
+    return speech.audio
 
 
 def _text(content) -> str:
@@ -253,15 +260,17 @@ def connect_google(kind: str | None):
     return google_button(), message
 
 
-def privacy_notice() -> str:
-    return privacy.startup() or ""
+def sidebar_status():
+    """Outputs: the Google button and today's usage, both as they are now."""
+    return google_button(), todays_usage()
 
 
-def build() -> gr.Blocks:
+def build(privacy_notice: str = "") -> gr.Blocks:
+    """The chat UI. `privacy_notice` (from `privacy.startup()`) shows under the Google button."""
     with gr.Blocks(title="Perry") as demo:
         thread_id = gr.State(None)
         pending = gr.State(EMPTY)
-        spoken = gr.State(False)  # whether the latest request came by voice
+        voice_turn = gr.State(None)  # the Turn id when the latest request came by voice
 
         with gr.Sidebar():
             gr.Markdown("## Perry")
@@ -323,46 +332,58 @@ def build() -> gr.Blocks:
             )
             speaker = gr.Audio(label="Perry's answer", autoplay=True, interactive=False)
 
+        status_outputs = [google, usage_status]
+
+        def then_refresh_status(event):
+            """After anything that may call a model or the Workspace, refresh the sidebar."""
+            return event.then(sidebar_status, None, status_outputs)
+
         answer_outputs = [chatbot, thread_id, thread_picker, *card_outputs]
-        box.submit(show_user_message, [box, chatbot], [pending, chatbot, box]).then(
-            answer, [pending, chatbot, thread_id], answer_outputs
-        ).then(google_button, None, google)
-        box.submit(lambda: False, None, spoken)
-        mic.stop_recording(hear, [mic, chatbot], [pending, chatbot, mic, spoken]).then(
-            answer, [pending, chatbot, thread_id], answer_outputs
-        ).then(read_aloud, [spoken, chatbot], speaker).then(
-            todays_usage, None, usage_status
-        ).then(google_button, None, google)
-        approve_button.click(
-            approve, [thread_id, waiting, chatbot, *card_fields], [chatbot, *card_outputs]
-        ).then(google_button, None, google)
-        reject_button.click(
-            reject, [thread_id, waiting, chatbot, card_note], [chatbot, *card_outputs]
-        ).then(google_button, None, google)
+        then_refresh_status(
+            box.submit(show_user_message, [box, chatbot], [pending, chatbot, box]).then(
+                answer, [pending, chatbot, thread_id], answer_outputs
+            )
+        )
+        box.submit(lambda: None, None, voice_turn)
+        then_refresh_status(
+            mic.stop_recording(
+                hear, [mic, chatbot, thread_id], [pending, chatbot, mic, voice_turn]
+            )
+            .then(answer, [pending, chatbot, thread_id, voice_turn], answer_outputs)
+            .then(read_aloud, [voice_turn, chatbot, thread_id], speaker)
+        )
+        then_refresh_status(
+            approve_button.click(
+                approve, [thread_id, waiting, chatbot, *card_fields], [chatbot, *card_outputs]
+            )
+        )
+        then_refresh_status(
+            reject_button.click(
+                reject, [thread_id, waiting, chatbot, card_note], [chatbot, *card_outputs]
+            )
+        )
         thread_picker.input(open_thread, thread_picker, [chatbot, thread_id, *card_outputs])
         new_button.click(new_thread, None, [chatbot, thread_id, thread_picker, *card_outputs])
-        uploader.upload(
-            propose_upload, uploader, [uploaded, upload_status, upload_choice]
-        ).then(todays_usage, None, usage_status)
-        ingest_button.click(
-            ingest_upload, uploaded, [upload_status, upload_choice]
-        ).then(todays_usage, None, usage_status)
+        then_refresh_status(
+            uploader.upload(propose_upload, uploader, [uploaded, upload_status, upload_choice])
+        )
+        then_refresh_status(
+            ingest_button.click(ingest_upload, uploaded, [upload_status, upload_choice])
+        )
         cancel_button.click(cancel_upload, None, [uploaded, upload_status, upload_choice])
         dataset_uploader.upload(
             upload_datasets, dataset_uploader, [dataset_status, datasets_shown]
         )
-        # Refreshed whenever Perry finishes an answer, and on page load.
-        chatbot.change(todays_usage, None, usage_status)
-        demo.load(todays_usage, None, usage_status)
-        demo.load(google_button, None, google)
-        demo.load(privacy_notice, None, google_status)
+        demo.load(sidebar_status, None, status_outputs)
+        demo.load(lambda: privacy_notice, None, google_status)
         google.click(connect_google, account_kind, [google, google_status])
     return demo
 
 
 if __name__ == "__main__":
     # Before anything runs: switches tracing off if a real account is connected.
-    if notice := privacy.startup():
+    notice = privacy.startup() or ""
+    if notice:
         print(notice)
     db.init_schema()
-    build().launch(server_name="127.0.0.1", allowed_paths=[str(charts.directory())])
+    build(notice).launch(server_name="127.0.0.1", allowed_paths=[str(charts.directory())])

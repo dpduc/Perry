@@ -2,7 +2,8 @@
 
 from datetime import datetime, timedelta
 
-from fakes import call, last_message
+import pytest
+from fakes import call, last_message, with_usage
 
 from perry.supervisor import Approve, Confirmation, Reject
 from perry.workspace import InMemoryWorkspace
@@ -149,6 +150,9 @@ def test_task_agent_failing_after_a_write_action_is_not_rerun(perry, workspace):
 
     assert len(workspace.sent) == 1  # a retry would have re-run the Task Agent
     assert "failed once" in reply
+    assert "no result" not in reply  # the email was in fact sent
+    assert "outcome is unknown" in reply
+    assert "may already have been performed" in reply
 
 
 def test_chained_turn_pauses_at_the_write_action_in_the_middle(perry, workspace):
@@ -180,12 +184,13 @@ def test_chained_turn_pauses_at_the_write_action_in_the_middle(perry, workspace)
     assert "Revenue grew 12%" in pending.summary
     assert workspace.sent == []
 
-    perry.script(last_message, "Done: I emailed Sam the Q3 summary [q3-notes.md].")
+    # The Supervisor's answer drops the Citation; it comes back all the same.
+    perry.script(last_message, "Done: I emailed Sam the Q3 summary.")
     reply = perry.resume(Approve())
 
     assert [e.subject for e in workspace.sent] == ["Q3 summary"]
     assert perry.consulted() == ["ask_knowledge_agent", "ask_task_agent"]
-    assert reply == "Done: I emailed Sam the Q3 summary [q3-notes.md]."
+    assert reply == "Done: I emailed Sam the Q3 summary.\n\nCitations: [q3-notes.md]"
     assert perry.history()[-1] == {"role": "assistant", "content": reply}
 
 
@@ -274,3 +279,47 @@ def test_replying_and_creating_and_deleting_each_wait_for_their_own_confirmation
     assert [(e.title, e.attendees) for e in workspace.events] == [
         ("Lunch with Priya", ("priya@example.com",))
     ]
+
+
+@pytest.mark.parametrize(
+    ("steps_after", "answered"), [(1, True), (2, False)], ids=["within_cap", "past_cap"]
+)
+def test_steps_before_a_confirmation_count_toward_the_turns_step_cap(
+    perry, workspace, steps_after, answered
+):
+    from perry.supervisor import MAX_STEPS_PER_TURN
+
+    steps_before = MAX_STEPS_PER_TURN - 1
+    for _ in range(steps_before - 1):
+        perry.script(call("ask_knowledge_agent", question="Anything on Sam?"), "Nothing.")
+    propose_email_to_sam(perry)  # the last step before the Confirmation
+    assert isinstance(perry.send("Look around, then tell Sam I'm late"), Confirmation)
+
+    perry.script(last_message)  # Task Agent reports the email was sent
+    for _ in range(steps_after):
+        perry.script(call("ask_knowledge_agent", question="Anything else?"), "Nothing.")
+    perry.script("Done.")
+    reply = perry.resume(Approve())
+
+    if answered:
+        assert reply == "Done."
+    else:
+        assert reply.startswith(f"I stopped after {MAX_STEPS_PER_TURN} steps without finishing.")
+    assert len(workspace.sent) == 1
+
+
+def test_tokens_before_a_confirmation_count_toward_the_turns_token_ceiling(
+    perry, workspace, monkeypatch
+):
+    monkeypatch.setenv("PERRY_TURN_TOKEN_CEILING", "1000")
+    perry.script(
+        with_usage(call("ask_task_agent", request="Email Sam that I'm late."), 900),
+        call("send_email", to="sam@example.com", subject="Late", body="Running late."),
+    )
+    assert isinstance(perry.send("Tell Sam I'm late"), Confirmation)
+
+    perry.script(with_usage(last_message, 200), "Sent.")  # 1,100 tokens in this Turn
+    reply = perry.resume(Approve())
+
+    assert reply.startswith("I stopped because this Turn reached its limit of 1,000 tokens.")
+    assert len(workspace.sent) == 1

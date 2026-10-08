@@ -109,3 +109,32 @@ def test_query_results_are_cut_at_the_row_limit(database):
 def test_a_failing_query_names_the_problem(database):
     with pytest.raises(datasets.QueryError, match='The query failed: relation "nope"'):
         datasets.run_query("SELECT * FROM nope")
+
+
+# Whatever the SQL says, Postgres keeps the limits: one statement, read-only, timed out.
+BYPASS_ATTEMPTS = [
+    "SET statement_timeout = 0; SELECT pg_sleep(1)",
+    "SET LOCAL statement_timeout = 0; SELECT pg_sleep(1)",
+    "SET default_transaction_read_only = off; SELECT current_setting('transaction_read_only')",
+    "SELECT 1; SELECT pg_sleep(1)",
+]
+
+
+@pytest.mark.parametrize("statement", BYPASS_ATTEMPTS)
+def test_only_a_single_statement_is_accepted(database, statement):
+    with pytest.raises(datasets.QueryError, match="failed"):
+        datasets.run_query(statement, timeout_ms=200)
+
+
+def test_a_query_cannot_lift_its_own_timeout(database):
+    with pytest.raises(datasets.QueryError, match="took longer than 0.2 seconds"):
+        datasets.run_query(
+            "SELECT set_config('statement_timeout', '0', true), pg_sleep(1)", timeout_ms=200
+        )
+
+
+def test_a_query_cannot_leave_read_only(database):
+    with pytest.raises(datasets.QueryError, match="failed"):
+        datasets.run_query("SELECT set_config('transaction_read_only', 'off', true)")
+
+    assert datasets.run_query("SELECT current_setting('transaction_read_only')").rows == [("on",)]

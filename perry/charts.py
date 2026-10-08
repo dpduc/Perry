@@ -9,13 +9,13 @@ import re
 import uuid
 from pathlib import Path
 
-from perry import google_auth
+from perry.paths import app_data_dir
 
 _MARKER = re.compile(r"\[chart: ([0-9a-f]{32}\.png)\]")
 
 
 def directory() -> Path:
-    return google_auth.app_data_dir() / "charts"
+    return app_data_dir() / "charts"
 
 
 def save(png: bytes) -> str:

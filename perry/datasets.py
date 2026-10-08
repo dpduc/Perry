@@ -2,7 +2,8 @@
 
 Uploading writes through the main connection. Querying (`run_query`) connects as the
 read-only analyst role, so whatever SQL the Analysis Agent writes, Postgres only lets
-it read Datasets, within a statement timeout, and Perry returns at most a row limit.
+it run one statement that reads Datasets, within a statement timeout, and Perry
+returns at most a row limit.
 """
 
 import os
@@ -178,16 +179,23 @@ def list_datasets() -> list[Dataset]:
 def run_query(
     query: str, *, row_limit: int = ROW_LIMIT, timeout_ms: int = STATEMENT_TIMEOUT_MS
 ) -> QueryResult:
-    """Run one SQL statement as the read-only analyst role. Raises QueryError on failure."""
+    """Run one SQL statement as the read-only analyst role. Raises QueryError on failure.
+
+    The limits hold whatever the SQL says: the statement runs prepared (the extended
+    protocol, which accepts a single statement only) in a READ ONLY transaction whose
+    timeout Perry sets first, and only `row_limit` rows are fetched.
+    """
+    timeout = sql.SQL("SET LOCAL statement_timeout = {}").format(sql.Literal(int(timeout_ms)))
     try:
-        with psycopg.connect(
-            db.analyst_conninfo(timeout_ms), autocommit=True, connect_timeout=5
-        ) as conn:
-            cursor = conn.execute(query)
-            if cursor.description is None:
-                return QueryResult([], [], truncated=False)
-            columns = [c.name for c in cursor.description]
-            rows = cursor.fetchmany(row_limit + 1)
+        with psycopg.connect(db.analyst_conninfo(timeout_ms), connect_timeout=5) as conn:
+            conn.read_only = True
+            with conn.transaction():
+                conn.execute(timeout)
+                cursor = conn.execute(query, prepare=True)
+                if cursor.description is None:
+                    return QueryResult([], [], truncated=False)
+                columns = [c.name for c in cursor.description]
+                rows = cursor.fetchmany(row_limit + 1)
     except psycopg.errors.QueryCanceled as error:
         raise QueryError(
             f"The query took longer than {timeout_ms / 1000:g} seconds and was stopped."
