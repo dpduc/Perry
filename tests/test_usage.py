@@ -4,22 +4,6 @@ import pytest
 from fakes import call, last_message, with_usage
 
 
-@pytest.fixture
-def prices(tmp_path, monkeypatch):
-    """Write a price table (USD per million tokens) and point Perry at it."""
-    path = tmp_path / "prices.toml"
-    monkeypatch.setenv("PERRY_PRICES_FILE", str(path))
-
-    def write(table: dict[str, dict[str, float]]) -> None:
-        lines = []
-        for model, rates in table.items():
-            lines.append(f'[models."{model}"]')
-            lines += [f"{kind}_per_million = {rate}" for kind, rate in rates.items()]
-        path.write_text("\n".join(lines), encoding="utf-8")
-
-    return write
-
-
 def ask_about_budget(perry, *, tokens: list[tuple[int, int]]) -> str:
     """A Turn that consults the Knowledge Agent: 4 chat calls with the given (input, output)
     tokens, and one embedding of the search query."""

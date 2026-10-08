@@ -12,7 +12,7 @@ from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from pydantic import Field
 
-from perry.models import EMBEDDING_DIMENSIONS, Provider
+from perry.models import EMBEDDING_DIMENSIONS, Provider, Speech, Transcription
 
 
 def fake_embed_one(text: str) -> list[float]:
@@ -113,12 +113,31 @@ def _is_callable_step(step: Any) -> bool:
     return callable(step) and not isinstance(step, (BaseMessage, ToolCall))
 
 
-def fake_provider(chat: ScriptedChatModel, *, local: bool = False) -> Provider:
+_SPOKEN = b"fake-speech:"
+
+
+def spoken(text: str) -> bytes:
+    """Fake audio of someone saying `text`: what the fake speech models hear and produce."""
+    return _SPOKEN + text.encode()
+
+
+def fake_transcribe(audio: bytes, mime_type: str) -> Transcription:
+    assert audio.startswith(_SPOKEN), f"Not fake speech: {audio[:20]!r}"
+    return Transcription(audio.removeprefix(_SPOKEN).decode(), "fake-stt", 40, 10)
+
+
+def fake_synthesize(text: str) -> Speech:
+    return Speech(spoken(text), "fake-tts", 10, 200)
+
+
+def fake_provider(chat: ScriptedChatModel, *, speech: bool = True, local: bool = False) -> Provider:
     """Fake models; `local=True` makes text generation count as local (for privacy checks)."""
     return Provider(
         chat_model=lambda: chat,
         embed_documents=fake_embed,
         embed_query=fake_embed_one,
         embedding_model="fake-embedding",
+        transcribe=fake_transcribe if speech else None,
+        synthesize=fake_synthesize if speech else None,
         local_text_generation=local,
     )
