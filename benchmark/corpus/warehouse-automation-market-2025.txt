@@ -1,0 +1,35 @@
+European Warehouse Automation Market Review 2025
+
+Prepared for Halden Robotics' strategy team by an external analyst firm. Figures are estimates.
+
+Market size
+
+The European market for warehouse robotics grew by about 14% in 2025 to an estimated EUR 6.8 billion. Autonomous mobile robots, including pallet movers, were the fastest-growing category at around 22%. Fixed automation such as conveyors and automated storage systems still accounts for more than half of spending, but its growth has slowed to single digits.
+
+Germany, the United Kingdom and France together account for roughly 55% of European demand. Central and Eastern Europe is the fastest-growing region, as manufacturers and retailers move distribution centres closer to new factories in Poland, the Czech Republic and Hungary.
+=== page break ===
+Competitive landscape
+
+The autonomous pallet mover segment is crowded. Large automation groups now offer their own pallet movers, often bundled with conveyors and warehouse management software, and can undercut specialists on price. Specialist vendors compete on navigation quality, uptime and ease of deployment.
+
+Picking arms remain a younger market. Success rates on mixed-item picking have improved, but most deployments still pair robots with human pickers for difficult items. Vendors that can show high picks per hour on real customer assortments are winning the largest contracts.
+
+Fleet software is becoming a separate buying decision. Customers increasingly run robots from several vendors and want one system to schedule them, which favours vendor-neutral orchestration software.
+=== page break ===
+Technology trends
+
+Lidar prices continued to fall in 2025, by around 15%, as automotive volumes pushed suppliers to scale. Solid-state lidar is starting to replace mechanical spinning units in mobile robots. Several robot makers are experimenting with camera-only navigation to remove lidar costs altogether, although lidar remains the standard for safety-rated obstacle detection.
+
+Battery technology is shifting from lead-acid to lithium iron phosphate packs, which charge faster and last longer, allowing robots to opportunity-charge during short breaks instead of swapping batteries.
+
+Interest in route planning based on machine learning is rising: operators report 5 to 10% throughput gains when fleets are scheduled by learned models instead of fixed rules.
+=== page break ===
+Cold-chain logistics
+
+Cold-chain warehousing (chilled and frozen goods) is one of the least automated parts of the market. Working at minus 25 degrees is hard for people and for machines: batteries lose capacity, lubricants thicken and sensors suffer from frost and condensation.
+
+The analysts estimate that fewer than 10% of European frozen-goods warehouses use autonomous mobile robots today. Vendors that can prove reliable operation in freezers can charge a premium of 20 to 30% over standard models.
+
+Recommendations
+
+The review recommends that specialists focus on niches where large vendors are weak, such as cold-chain operations and vendor-neutral fleet software, and that they reduce dependence on single suppliers for key sensors as the market for components consolidates.
