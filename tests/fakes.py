@@ -74,7 +74,7 @@ class ScriptedChatModel(BaseChatModel):
                 f"Last message: {messages[-1].text!r}"
             )
         step = self.steps.pop(0)
-        if callable(step) and not isinstance(step, (BaseMessage, ToolCall)):
+        if _is_callable_step(step):
             step = step(messages)
         return ChatResult(generations=[ChatGeneration(message=_reply(step))])
 
@@ -93,5 +93,30 @@ def _reply(step: Step) -> AIMessage:
     raise TypeError(f"Not a scripted reply: {step!r}")
 
 
+def with_usage(step: Step, input_tokens: int, output_tokens: int = 0) -> Callable:
+    """A Step that replies like `step` and reports this many tokens used."""
+
+    def reply(messages: list[BaseMessage]) -> AIMessage:
+        inner = step(messages) if _is_callable_step(step) else step
+        message = _reply(inner)
+        message.usage_metadata = {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens,
+        }
+        return message
+
+    return reply
+
+
+def _is_callable_step(step: Any) -> bool:
+    return callable(step) and not isinstance(step, (BaseMessage, ToolCall))
+
+
 def fake_provider(chat: ScriptedChatModel) -> Provider:
-    return Provider(chat_model=lambda: chat, embed_documents=fake_embed, embed_query=fake_embed_one)
+    return Provider(
+        chat_model=lambda: chat,
+        embed_documents=fake_embed,
+        embed_query=fake_embed_one,
+        embedding_model="fake-embedding",
+    )

@@ -38,6 +38,21 @@ CREATE TABLE IF NOT EXISTS threads (
     title      text NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- The usage ledger: one row per model call. Cost is priced when recorded.
+CREATE TABLE IF NOT EXISTS usage_ledger (
+    id            bigserial PRIMARY KEY,
+    recorded_at   timestamptz NOT NULL DEFAULT now(),
+    thread_id     text,
+    turn_id       text,
+    kind          text NOT NULL,
+    model         text NOT NULL,
+    input_tokens  int NOT NULL,
+    output_tokens int NOT NULL,
+    cost_usd      numeric NOT NULL
+);
+CREATE INDEX IF NOT EXISTS usage_ledger_recorded_at_idx ON usage_ledger (recorded_at);
+CREATE INDEX IF NOT EXISTS usage_ledger_turn_idx ON usage_ledger (turn_id);
 """
 
 
