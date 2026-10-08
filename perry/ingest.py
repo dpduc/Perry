@@ -1,28 +1,35 @@
 """Store Documents as embedded Chunks. Also a CLI for bulk loads:
 
-    uv run python -m perry.ingest path/to/folder-or-file
+    uv run python -m perry.ingest path/to/folder-or-file [--yes]
+
+It shows the estimated tokens and cost and asks before ingesting. Ingestion counts
+toward the daily cap and is refused, before any model call, if it would exceed it.
 """
 
+import argparse
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 from pgvector import Vector
 
-from perry import db, models
+from perry import db, models, usage
 from perry.documents import content_hash, find_files, parse
 
 
 @dataclass(frozen=True)
 class IngestResult:
     name: str
-    status: str  # "ingested" | "unchanged"
+    status: str  # "ingested" | "unchanged" | "failed"
     chunks: int = 0
     pages_without_text: tuple[int, ...] = ()
+    error: str = ""
 
     def describe(self) -> str:
         if self.status == "unchanged":
             return f"{self.name}: unchanged, skipped"
+        if self.status == "failed":
+            return f"{self.name}: failed ({self.error})"
         message = f"{self.name}: {self.chunks} chunks"
         if self.pages_without_text:
             pages = ", ".join(map(str, self.pages_without_text))
@@ -30,13 +37,93 @@ class IngestResult:
         return message
 
 
-def ingest_file(path: Path, *, embed=models.embed_documents) -> IngestResult:
-    """Ingest one Document. A Document with the same name is replaced; identical content is skipped."""
+@dataclass(frozen=True)
+class EstimatedCall:
+    """Model calls that ingestion expects to make, priced as the usage ledger will price them."""
+
+    kind: str  # as recorded in the usage ledger, e.g. "embedding"
+    model: str
+    input_tokens: int
+    output_tokens: int = 0
+
+    @property
+    def tokens(self) -> int:
+        return self.input_tokens + self.output_tokens
+
+    @property
+    def cost_usd(self) -> float:
+        return usage.cost(self.model, self.input_tokens, self.output_tokens)
+
+
+@dataclass(frozen=True)
+class IngestionEstimate:
+    """What ingesting some files would cost, worked out without calling any model."""
+
+    files: int
+    unchanged: int
+    calls: tuple[EstimatedCall, ...]
+
+    @property
+    def tokens(self) -> int:
+        return sum(call.tokens for call in self.calls)
+
+    @property
+    def cost_usd(self) -> float:
+        return sum(call.cost_usd for call in self.calls)
+
+    def describe(self) -> str:
+        files = "1 file" if self.files == 1 else f"{self.files} files"
+        message = f"{files}: about {self.tokens:,} tokens, ${self.cost_usd:.4f}"
+        if self.unchanged:
+            message += f" ({self.unchanged} unchanged, skipped)"
+        return message + "."
+
+
+def estimate_file(path: Path) -> list[EstimatedCall] | None:
+    """The model calls ingesting `path` would make, or None if it is unchanged and skipped.
+
+    Every ingestion step that calls a model adds its calls here, so the estimate
+    and the budget check cover it.
+    """
+    if _unchanged(path):
+        return None
+    parsed = parse(path)
+    texts = [chunk.text for chunk in parsed.chunks]
+    if not texts:
+        return []
+    return [EstimatedCall("embedding", models.embedding_model(), models.estimate_tokens(texts))]
+
+
+def estimate_ingestion(paths: list[Path]) -> IngestionEstimate:
+    """What `ingest_files(paths)` would cost. Makes no model calls."""
+    calls: list[EstimatedCall] = []
+    unchanged = 0
+    for path in paths:
+        try:
+            file_calls = estimate_file(path)
+        except Exception:  # noqa: BLE001 - it will fail at ingestion too, before any model call
+            file_calls = []
+        if file_calls is None:
+            unchanged += 1
+        else:
+            calls.extend(file_calls)
+    return IngestionEstimate(len(paths), unchanged, tuple(calls))
+
+
+def _unchanged(path: Path) -> bool:
     with db.pool().connection() as conn:
         row = conn.execute(
             "SELECT content_hash FROM documents WHERE name = %s", (path.name,)
         ).fetchone()
-    if row and row["content_hash"] == content_hash(path):
+    return row is not None and row["content_hash"] == content_hash(path)
+
+
+def ingest_file(path: Path, *, embed=models.embed_documents) -> IngestResult:
+    """Ingest one Document. A Document with the same name is replaced; identical content is skipped.
+
+    This doesn't check the daily cap: bulk ingestion goes through `ingest_files`.
+    """
+    if _unchanged(path):
         return IngestResult(path.name, "unchanged")
 
     parsed = parse(path)
@@ -63,17 +150,67 @@ def ingest_file(path: Path, *, embed=models.embed_documents) -> IngestResult:
     )
 
 
-def main(target: str) -> None:
+class OverBudget(Exception):
+    """Ingestion would cost more than what is left of today's budget."""
+
+    def __init__(self, estimate: IngestionEstimate, remaining_usd: float, cap_usd: float):
+        super().__init__(
+            f"Ingesting these files would cost about ${estimate.cost_usd:.4f}, "
+            f"but only ${remaining_usd:.4f} of today's ${cap_usd:.2f} budget is left."
+        )
+        self.estimate = estimate
+
+
+def check_budget(estimate: IngestionEstimate) -> None:
+    """Raise OverBudget if `estimate` costs more than what is left of today's budget."""
+    remaining = usage.remaining_today()
+    if estimate.cost_usd > remaining:
+        raise OverBudget(estimate, remaining, usage.daily_cap_usd())
+
+
+def ingest_files(paths: list[Path]) -> list[IngestResult]:
+    """Ingest several Documents, after checking they fit in today's remaining budget.
+
+    Raises OverBudget, before any model call, if the estimate exceeds what is left.
+    Show the user `estimate_ingestion(paths)` and get their OK before calling this.
+    A file that fails is reported in its result, and the rest are still ingested.
+    """
+    check_budget(estimate_ingestion(paths))
+    results = []
+    for path in paths:
+        try:
+            results.append(ingest_file(path))
+        except Exception as error:  # noqa: BLE001 - report per file, keep going with the rest
+            results.append(IngestResult(path.name, "failed", error=str(error)))
+    return results
+
+
+def main(argv: list[str] | None = None, *, ask=input) -> None:
+    parser = argparse.ArgumentParser(prog="python -m perry.ingest", description=__doc__)
+    parser.add_argument("target", help="a Document file, or a folder to ingest recursively")
+    parser.add_argument("--yes", action="store_true", help="don't ask before ingesting")
+    args = parser.parse_args(argv)
+
     db.init_schema()
-    path = Path(target)
+    path = Path(args.target)
     files = [path] if path.is_file() else find_files(path)
     if not files:
         sys.exit(f"No supported files found in {path}")
-    for file in files:
-        print(ingest_file(file).describe())
+
+    try:
+        estimate = estimate_ingestion(files)
+        check_budget(estimate)
+        if not args.yes:
+            question = f"Ingest {estimate.describe().removesuffix('.')}? [y/N] "
+            if ask(question).strip().lower() not in {"y", "yes"}:
+                print("Nothing ingested.")
+                return
+        results = ingest_files(files)
+    except OverBudget as refused:
+        sys.exit(str(refused))
+    for result in results:
+        print(result.describe())
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        sys.exit("Usage: python -m perry.ingest <folder-or-file>")
-    main(sys.argv[1])
+    main()

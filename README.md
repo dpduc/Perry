@@ -19,7 +19,7 @@ docker compose up -d --wait          # Postgres + pgvector on 127.0.0.1:5433
 
 ```powershell
 uv run python -m perry.app              # chat UI at http://127.0.0.1:7860
-uv run python -m perry.ingest some\folder  # bulk-load Documents (.pdf, .md, .txt)
+uv run python -m perry.ingest some\folder  # bulk-load Documents (.pdf, .md, .txt); shows the estimated cost and asks first (--yes skips the question)
 ```
 
 Documents can also be uploaded from the UI sidebar. Uploading a file with the same name replaces the old version.
@@ -29,6 +29,16 @@ Documents can also be uploaded from the UI sidebar. Uploading a file with the sa
 When SQL isn't enough (statistics, forecasts, charts), the Analysis Agent writes Python that runs in the **Sandbox**: a throwaway Docker container from the image in `sandbox/Dockerfile` (pandas, numpy, scipy, matplotlib), built on first use. It has no network, CPU, memory and time limits, no environment from the host, and sees only a temp folder holding the input CSVs Perry wrote from read-only queries. Charts it saves are kept under `%APPDATA%\Perry\charts` and shown in the chat. Sandbox tests skip when Docker isn't running.
 
 Push to talk: record with the microphone under the chat box and stop to send. Perry shows the transcription as your message and reads its answer aloud (text-to-speech model: `PERRY_TTS_MODEL`). Speech counts toward usage like any other model call.
+
+## Eval set
+
+```powershell
+uv run python -m evals --list            # the eval Turns
+uv run python -m evals                   # run them all against the real model
+uv run python -m evals knowledge-aphids  # only Turns whose id starts with this
+```
+
+Each eval Turn ([evals/turns/](evals/turns/), one file per Agent) says which Agents must be consulted and which Citations the answer must contain; those checks pass or fail the run. An LLM judge also scores answer quality, which is only reported (and logged to the LangSmith project `perry-eval` when tracing is on). The run uses its own `perry_eval` database loaded from [evals/documents/](evals/documents/) and [evals/datasets/](evals/datasets/) (the `analysis-python-*` Turns run Python in the Sandbox, so they need Docker), and a fake calendar and mailbox ([evals/workspace.py](evals/workspace.py)) instead of Google. It isn't part of `uv run pytest` or the pre-commit hook, because it spends real requests: with pacing, a full run takes about 15 minutes on the free tier.
 
 ## Connecting Google (Task Agent)
 
@@ -52,4 +62,4 @@ Manual check against the test account: add a few events for tomorrow and a few e
 - **Privacy:** on the free tier, Google may use what you send to improve its products. Don't upload anything confidential.
 - **Scanned PDF pages** (no extractable text) are skipped for now and listed after upload. Vision transcription is a later step.
 - **Changing the embedding model** or its dimension means re-ingesting every Document.
-- **Usage:** every model call is recorded with its tokens and cost (the sidebar shows today's totals). Prices live in `prices.toml`; edit it to match current pricing. A Turn stops at `PERRY_TURN_TOKEN_CEILING` tokens (default 50,000) and reports what it found so far. Embedding tokens are estimated (about 4 characters per token), since the Gemini API doesn't report them.
+- **Usage:** every model call is recorded with its tokens and cost (the sidebar shows today's totals). Prices live in `prices.toml`; edit it to match current pricing. A Turn stops at `PERRY_TURN_TOKEN_CEILING` tokens (default 50,000) and reports what it found so far. Embedding tokens are estimated (about 4 characters per token), since the Gemini API doesn't report them. Once today's cost reaches `PERRY_DAILY_CAP_USD` (default $1), new Turns are refused until local midnight; a Turn already running always finishes. Uploads count toward the cap too: they show an estimate and wait for your OK, and are refused up front if they would go over.

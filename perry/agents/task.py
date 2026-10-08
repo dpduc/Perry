@@ -13,7 +13,7 @@ from datetime import date, datetime, time, timedelta
 from langchain.agents import create_agent
 from langchain_core.tools import tool
 
-from perry import models, workspace
+from perry import models, retries, workspace
 from perry.workspace import Email, Event
 
 SYSTEM_PROMPT = """You are Perry's Task Agent. You look things up in the user's \
@@ -94,6 +94,7 @@ def task_agent():
     return create_agent(
         models.chat_model(),
         tools=[*READ_ACTIONS, *WRITE_ACTIONS],
+        middleware=[retries.RetryFailedSteps()],  # Write Actions must be marked never_retry
         system_prompt=SYSTEM_PROMPT.format(now=f"{now:%A %Y-%m-%d %H:%M %Z}"),
         name="task_agent",
     )

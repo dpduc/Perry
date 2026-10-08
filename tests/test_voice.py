@@ -49,3 +49,30 @@ def test_a_provider_without_speech_refuses_voice_requests(database):
         assert not models.speech_supported()
         with pytest.raises(models.SpeechUnavailable):
             models.transcribe(spoken("Hello"), "audio/wav")
+
+
+def test_voice_request_after_the_daily_cap_is_refused_without_transcribing(
+    perry, prices, monkeypatch, tmp_path
+):
+    from perry import app, usage
+
+    prices({"scripted": {"input": 1.0, "output": 1.0}, "fake-stt": {"input": 1.0}})
+    monkeypatch.setenv("PERRY_DAILY_CAP_USD", "0.01")
+    perry.script(with_usage("Hi! How can I help?", 10_000))  # $0.01: the whole cap
+    perry.send("Hello")
+    used = usage.today().tokens
+    recording = tmp_path / "request.wav"
+    recording.write_bytes(spoken("How big is my Q3 marketing budget?"))
+
+    message, history, _, read_aloud = app.hear(str(recording), [])
+
+    assert message == {"text": "", "files": []}  # nothing is sent as a Turn
+    assert history == [
+        {
+            "role": "assistant",
+            "content": "Perry has used today's budget of $0.01, so it can't take new "
+            "requests until the budget resets at midnight.",
+        }
+    ]
+    assert not read_aloud
+    assert usage.today().tokens == used  # no speech-to-text call was made

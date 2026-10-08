@@ -9,7 +9,7 @@ from langchain_core.tools import tool
 from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.errors import GraphRecursionError
 
-from perry import charts, db, models, usage, workspace
+from perry import charts, db, models, retries, usage, workspace
 from perry.agents import analysis, knowledge, task
 from perry.images import user_message
 
@@ -33,7 +33,9 @@ rather than answering from general knowledge.
 - If an Agent reports it couldn't find something, tell the user so. Never invent results.
 - Small talk and questions about yourself need no Agent.
 - When the Analysis Agent shows the SQL or Python it used, include it unchanged in your answer.
-- Keep chart markers like [chart: <id>.png] exactly as given; they show as images."""
+- Keep chart markers like [chart: <id>.png] exactly as given; they show as images.
+- If a step comes back FAILED, give the results of the steps that worked, then say which \
+step failed. Never guess what a failed step would have returned."""
 
 
 @tool
@@ -73,6 +75,9 @@ def supervisor():
             ask_task_agent,
             ask_analysis_agent,
         ],
+        middleware=[
+            retries.RetryFailedSteps(),
+        ],
         system_prompt=SYSTEM_PROMPT,
         checkpointer=_checkpointer(),
         name="supervisor",
@@ -81,6 +86,10 @@ def supervisor():
 
 def run_turn(thread_id: str, message: str, images: list[str | Path] = ()) -> str:
     """Answer `message`, with any attached image files given to the model as well."""
+    try:
+        usage.check_daily_cap()
+    except usage.DailyCapReached as refused:
+        return str(refused)
     request = user_message(message, images)
     config = {
         "configurable": {"thread_id": thread_id},
