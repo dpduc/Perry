@@ -1,0 +1,51 @@
+Halden Robotics Employee Handbook (2025)
+
+Welcome to Halden
+
+This handbook explains how we work together. It applies to all employees in Gothenburg and Brno. Where Czech and Swedish law differ, your local employment contract takes precedence, and HR can explain the differences.
+
+Working hours
+
+Full-time employees work 40 hours a week. We use flexible hours: you can start between 7:00 and 9:30 as long as you are available for your team's core hours, 9:30 to 15:00. Factory staff in Brno work in two shifts, 6:00 to 14:00 and 14:00 to 22:00, and follow the shift plan published by the site manager.
+
+Remote work
+
+Office-based employees may work remotely up to two days a week after agreeing it with their manager. Engineers who need lab or cold-chamber time should book it in the facilities calendar at least two days ahead.
+=== page break ===
+Holidays and leave
+
+Employees in Sweden receive 25 days of paid holiday per year; employees in the Czech Republic receive 25 days as well, which is more than the legal minimum of 20. Holiday requests go through the HR system and need your manager's approval at least two weeks in advance for absences longer than three days.
+
+Parental leave follows local law. Halden tops up parental pay to 90% of salary for the first six months for employees with at least one year of service.
+
+Sick leave
+
+If you are ill, tell your manager before your shift or working day starts. From the eighth day of illness a doctor's certificate is required.
+
+Learning
+
+Every employee has a learning budget of EUR 1,500 a year for courses, conferences and books. Unused budget does not carry over to the next year.
+=== page break ===
+Travel and expenses
+
+Book travel through the company travel portal. Economy class is the default for all flights; business class is allowed only for flights longer than six hours and needs approval from a vice president.
+
+Train travel is preferred over flights for trips under five hours, such as Gothenburg to Oslo or Brno to Vienna.
+
+Submit expense claims within 30 days with a photo of each receipt. Meals during travel are reimbursed up to the local daily allowance. Alcohol is not reimbursed.
+
+Company cars
+
+Company cars are provided only to field service engineers who visit customer sites. Private use is allowed and is taxed as a benefit according to local rules.
+=== page break ===
+IT and security
+
+Use your company laptop for work. Never install unapproved software, and lock your screen whenever you leave your desk. Multi-factor authentication is mandatory for email and for the ERP system.
+
+Report suspected phishing emails to the IT service desk using the "Report phishing" button. Do not forward them to colleagues.
+
+Customer data, including warehouse layouts and robot logs received from pilot sites, is confidential. It may only be stored in approved systems and must never be uploaded to public AI tools.
+
+Speaking up
+
+If you see something unsafe, unethical or illegal, raise it with your manager, with HR or anonymously through the whistleblowing line. Halden will not tolerate retaliation against anyone who raises a concern in good faith.

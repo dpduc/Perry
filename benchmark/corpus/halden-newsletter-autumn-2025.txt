@@ -1,0 +1,23 @@
+The Halden Herald - Autumn 2025 staff newsletter
+
+Brno factory: six months in
+
+Our Brno factory opened its doors in June, and it has already become the heart of Wren production. Site manager Pavel Dvorak and his team celebrated the 500th Wren arm built in Brno in November, well ahead of plan. "Half of our team had never worked with robots before," says Pavel. "Now they train the new starters."
+
+The factory runs on renewable electricity, and the canteen has been voted the best in the company (sorry, Gothenburg).
+
+Meet the new VP of Engineering
+
+Anja Petrov took over as VP of Engineering in October. Anja joined Halden in 2019 as a firmware engineer and led the Kestrel K3 project through its difficult launch this year. Her first priority: "Making sure we test our robots where our customers actually use them."
+=== page break ===
+Hackathon results
+
+Thirty-four colleagues took part in the September hackathon. The winning team built a cold-storage simulator that lets Kestrel developers test navigation in freezing conditions on their laptops, without booking time in the cold chamber.
+
+Employee survey
+
+Thank you to the 89% of you who answered the annual employee survey. Overall engagement was 81%, up from 77% last year. The lowest score was for internal communication, which is one reason this newsletter now comes out every quarter.
+
+Welcome, Tessel AI!
+
+In December we agreed to acquire Tessel AI. Its 23 employees in Tallinn will join the Osprey team, led by Tessel's co-founder Kadri Tamm. Kadri says the team is looking forward to "getting our route planner onto thousands of real robots."

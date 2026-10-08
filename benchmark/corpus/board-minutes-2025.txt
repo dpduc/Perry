@@ -1,0 +1,31 @@
+Halden Robotics AB - Minutes of the Board of Directors, 2025 (extracts)
+
+Meeting of 14 February 2025, Gothenburg
+
+Present: Ingrid Holm (chair), Mara Lindqvist (CEO), Tomas Reyes (CFO), three non-executive directors.
+
+1. The board reviewed the business case for a second factory. Three locations had been assessed: Brno (Czech Republic), Lodz (Poland) and Gothenburg. The board approved an investment of EUR 22 million in a factory in Brno, to open by mid-2025.
+
+2. The CEO reported that the Kestrel K3 launch planned for March has been postponed while a sensor fault is investigated. The board asked for a full post-mortem once the product launches.
+
+3. The 2025 budget was approved.
+=== page break ===
+Meeting of 9 September 2025, Brno
+
+Present: Ingrid Holm (chair), Mara Lindqvist (CEO), Tomas Reyes (CFO), three non-executive directors. The meeting was held at the new Brno factory, followed by a site tour.
+
+1. The board discussed the Kestrel K3 post-mortem presented by Anja Petrov and thanked the team for the recovery of the launch.
+
+2. Appointment: Anja Petrov is appointed Vice President of Engineering, effective 1 October 2025. She succeeds Lars Eklund, who retires after nine years with the company.
+
+3. Supply policy: the board approved a dual-sourcing policy requiring a qualified second source for every Tier 1 component by the end of 2026. Procurement will report progress at each board meeting.
+=== page break ===
+Meeting of 2 December 2025, Gothenburg
+
+Present: Ingrid Holm (chair), Mara Lindqvist (CEO), Tomas Reyes (CFO), three non-executive directors.
+
+1. Acquisition: the board approved the acquisition of Tessel AI, a route-planning software company based in Tallinn, Estonia, for EUR 9.5 million. Tessel's technology will strengthen route planning in Osprey, and its team will join the Osprey organisation.
+
+2. Sustainability: the board set a target of 100% renewable electricity at all Halden sites by 2027. The Brno factory already buys renewable electricity; Gothenburg will switch in 2026.
+
+3. The 2026 budget, based on revenue of EUR 95 to 100 million, was approved.
