@@ -24,6 +24,16 @@ uv run python -m perry.ingest some\folder  # bulk-load Documents (.pdf, .md, .tx
 
 Documents can also be uploaded from the UI sidebar. Uploading a file with the same name replaces the old version.
 
+## Eval set
+
+```powershell
+uv run python -m evals --list            # the eval Turns
+uv run python -m evals                   # run them all against the real model
+uv run python -m evals knowledge-aphids  # only Turns whose id starts with this
+```
+
+Each eval Turn ([evals/turns/](evals/turns/), one file per Agent) says which Agents must be consulted and which Citations the answer must contain; those checks pass or fail the run. An LLM judge also scores answer quality, which is only reported (and logged to the LangSmith project `perry-eval` when tracing is on). The run uses its own `perry_eval` database loaded from [evals/documents/](evals/documents/). It isn't part of `uv run pytest` or the pre-commit hook, because it spends real requests: with pacing, a full run takes about 15 minutes on the free tier.
+
 ## Notes
 
 - **Speed on the free tier:** Gemini Flash allows 5 requests/minute, and Perry paces itself to 4. A Turn makes 3-6 model calls, so expect about 1-2 minutes per answer.
