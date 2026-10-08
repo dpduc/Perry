@@ -14,6 +14,7 @@ from perry import (
     privacy,
     threads,
     usage,
+    voice,
     workspace,
 )
 from perry.supervisor import (
@@ -55,15 +56,18 @@ def show_user_message(message: dict, history: list[dict]):
     return {"text": text, "files": images}, [*history, *shown], EMPTY
 
 
-def answer(message: dict, history: list[dict], thread_id: str | None):
-    """Run the Turn. Outputs: chat, Thread, Thread picker, then `show()`'s card outputs."""
+def answer(
+    message: dict, history: list[dict], thread_id: str | None, voice_turn: str | None = None
+):
+    """Run the Turn (`voice_turn` when the request came by voice). Outputs: chat,
+    Thread, Thread picker, then `show()`'s card outputs."""
     text, images = message.get("text", ""), message.get("files", [])
     if not text.strip() and not images:
         return history, thread_id, gr.skip(), *[gr.skip()] * (2 + len(CARD_FIELDS) + 2)
     if thread_id is None:
         thread_id = threads.create(text)
     # A pending Confirmation is cancelled by this message; the reply says so.
-    outcome = run_turn(thread_id, text, images=images)
+    outcome = run_turn(thread_id, text, images=images, turn_id=voice_turn)
     history, *card = show(outcome, history)
     picker = gr.update(choices=threads.list_recent(), value=thread_id)
     return history, thread_id, picker, *card
@@ -113,37 +117,41 @@ def reject(thread_id: str | None, waiting: Confirmation | None, history: list[di
     return show(resume_turn(thread_id, Reject(note.strip())), history)
 
 
-def hear(recording: str | None, history: list[dict]):
-    """Push-to-talk: transcribe the recording and show it as the user's message."""
+def hear(recording: str | None, history: list[dict], thread_id: str | None):
+    """Push-to-talk: transcribe the recording and show it as the user's message.
+    Outputs: message, chat, recorder, and the voice Turn (None if nothing is sent)."""
     if not recording:
-        return gr.skip(), history, None, False
-    # Transcribing is a model call, so it waits for the cap too.
-    if refused := usage.daily_cap_refusal():
-        return EMPTY, [*history, {"role": "assistant", "content": refused}], None, False
+        return gr.skip(), history, None, None
+    turn_id = voice.new_turn()
     try:
-        transcript = models.transcribe(Path(recording).read_bytes(), "audio/wav")
+        transcript = voice.transcribe(Path(recording).read_bytes(), thread_id, turn_id)
+    except usage.DailyCapReached as refused:
+        return EMPTY, [*history, {"role": "assistant", "content": str(refused)}], None, None
     except Exception as error:  # noqa: BLE001 - tell the user, keep the UI usable
         gr.Warning(f"Couldn't transcribe the recording: {error}")
-        return EMPTY, history, None, False
+        return EMPTY, history, None, None
     if not transcript.strip():
         gr.Warning("I didn't catch anything. Hold the button and speak, then release.")
-        return EMPTY, history, None, False
+        return EMPTY, history, None, None
     message = {"text": transcript, "files": []}
-    return message, [*history, {"role": "user", "content": transcript}], None, True
+    return message, [*history, {"role": "user", "content": transcript}], None, turn_id
 
 
-def read_aloud(spoken: bool, history: list[dict]):
-    """Speak the latest answer, only when the request came by voice."""
-    if not spoken or not history or history[-1]["role"] != "assistant":
+def read_aloud(turn_id: str | None, history: list[dict], thread_id: str | None):
+    """Speak the latest answer, only when the request came by voice (as Turn `turn_id`)."""
+    if turn_id is None or not history or history[-1]["role"] != "assistant":
         return None
     text = _text(history[-1]["content"])
     if not text:
         return None
     try:
-        return models.synthesize(text)
+        speech = voice.read_aloud(text, thread_id, turn_id)
     except Exception as error:  # noqa: BLE001 - the text answer is already shown
         gr.Warning(f"Couldn't read the answer aloud: {error}")
         return None
+    if speech.note:
+        gr.Warning(speech.note)
+    return speech.audio
 
 
 def _text(content) -> str:
@@ -260,7 +268,7 @@ def build() -> gr.Blocks:
     with gr.Blocks(title="Perry") as demo:
         thread_id = gr.State(None)
         pending = gr.State(EMPTY)
-        spoken = gr.State(False)  # whether the latest request came by voice
+        voice_turn = gr.State(None)  # the Turn id when the latest request came by voice
 
         with gr.Sidebar():
             gr.Markdown("## Perry")
@@ -326,10 +334,12 @@ def build() -> gr.Blocks:
         box.submit(show_user_message, [box, chatbot], [pending, chatbot, box]).then(
             answer, [pending, chatbot, thread_id], answer_outputs
         ).then(google_button, None, google)
-        box.submit(lambda: False, None, spoken)
-        mic.stop_recording(hear, [mic, chatbot], [pending, chatbot, mic, spoken]).then(
-            answer, [pending, chatbot, thread_id], answer_outputs
-        ).then(read_aloud, [spoken, chatbot], speaker).then(
+        box.submit(lambda: None, None, voice_turn)
+        mic.stop_recording(
+            hear, [mic, chatbot, thread_id], [pending, chatbot, mic, voice_turn]
+        ).then(answer, [pending, chatbot, thread_id, voice_turn], answer_outputs).then(
+            read_aloud, [voice_turn, chatbot, thread_id], speaker
+        ).then(
             todays_usage, None, usage_status
         ).then(google_button, None, google)
         approve_button.click(

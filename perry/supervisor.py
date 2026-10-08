@@ -171,11 +171,17 @@ class _TurnRun:
 
     @classmethod
     def start(
-        cls, graph, thread_id: str, before: StateSnapshot, request: HumanMessage | None
+        cls,
+        graph,
+        thread_id: str,
+        before: StateSnapshot,
+        request: HumanMessage | None,
+        turn_id: str | None = None,
     ) -> "_TurnRun":
-        """A new Turn for `request`, or with no `request` the Turn `before` is paused in."""
+        """A new Turn for `request` (`turn_id`, or a new id), or with no `request` the
+        Turn `before` is paused in."""
         paused = (before.metadata or {}) if request is None else {}
-        turn_id = paused.get(_TURN_ID) or usage.new_turn_id()
+        turn_id = paused.get(_TURN_ID) or turn_id or usage.new_turn_id()
         started_at = paused.get(_TURN_STARTED_AT_STEP, _graph_step(before))
         # Each resume runs the paused graph step again, so it isn't counted twice.
         resumes = paused.get(_TURN_RESUMES, -1) + 1
@@ -201,10 +207,13 @@ class _TurnRun:
 
 
 def run_turn(
-    thread_id: str, message: str, images: list[str | Path] = ()
+    thread_id: str, message: str, images: list[str | Path] = (), turn_id: str | None = None
 ) -> TurnResult:
     """Answer `message`, with any attached image files given to the model as well.
-    Returns the answer, or the Confirmation the Turn is waiting for."""
+    Returns the answer, or the Confirmation the Turn is waiting for.
+
+    `turn_id` continues a Turn whose model calls began before the message existed
+    (e.g. transcribing a voice request); by default the Turn is new."""
     config = _config(thread_id)
     graph = supervisor()
     cancelled = _cancel_pending(graph, config)
@@ -212,7 +221,7 @@ def run_turn(
         outcome = refused
     else:
         request = user_message(message, images)
-        run = _TurnRun.start(graph, thread_id, graph.get_state(config), request)
+        run = _TurnRun.start(graph, thread_id, graph.get_state(config), request, turn_id)
         outcome = _run(run, {"messages": [request]})
     if cancelled and isinstance(outcome, str):
         return f"{cancelled}\n\n{outcome}"

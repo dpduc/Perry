@@ -61,7 +61,8 @@ def sandbox_image():
 class VoiceReply:
     transcript: str
     text: str
-    audio: bytes
+    audio: bytes | None
+    note: str = ""
 
 
 class Perry:
@@ -106,12 +107,17 @@ class Perry:
 
     def say(self, audio: bytes) -> "VoiceReply":
         """Run one Turn from recorded speech, as push-to-talk does: the transcription is
-        sent as the message, and the reply comes back as text and audio."""
-        from perry import models
+        sent as the message, and the reply comes back as text and (unless a limit stops
+        it, which the note says) audio."""
+        from perry import supervisor, threads, voice
 
-        transcript = models.transcribe(audio, "audio/wav")
-        text = self.send(transcript)
-        return VoiceReply(transcript, text, models.synthesize(text))
+        turn_id = voice.new_turn()
+        transcript = voice.transcribe(audio, self.thread_id, turn_id)
+        if self.thread_id is None:
+            self.thread_id = threads.create(transcript)
+        text = supervisor.run_turn(self.thread_id, transcript, turn_id=turn_id)
+        speech = voice.read_aloud(text, self.thread_id, turn_id)
+        return VoiceReply(transcript, text, speech.audio, speech.note)
 
     def history(self) -> list[dict]:
         from perry import supervisor
