@@ -74,6 +74,10 @@ class SpeechUnavailable(Exception):
     """The current model provider can't transcribe or synthesise speech."""
 
 
+class VisionUnavailable(Exception):
+    """The current model provider can't read images."""
+
+
 @dataclass(frozen=True)
 class Provider:
     """Everything Perry needs from a model API."""
@@ -86,6 +90,10 @@ class Provider:
     # Speech, if the provider has it: (audio bytes, MIME type) -> text, and text -> WAV.
     transcribe: Callable[[bytes, str], Transcription] | None = None
     synthesize: Callable[[str], Speech] | None = None
+    # Vision, if the provider has it: (image bytes, MIME type) -> the text on the image,
+    # and the name the usage ledger prices those calls by.
+    read_image: Callable[[bytes, str], Transcription] | None = None
+    vision_model: str = "unknown"
 
 
 @cache
@@ -125,6 +133,8 @@ def _gemini() -> Provider:
         embedding_model=EMBEDDING_MODEL,
         transcribe=lambda audio, mime_type: _gemini_transcribe(chat_model(), audio, mime_type),
         synthesize=lambda text: _gemini_synthesize(tts, text),
+        read_image=lambda image, mime_type: _gemini_read_image(chat_model(), image, mime_type),
+        vision_model=LLM_MODEL,
     )
 
 
@@ -146,6 +156,27 @@ def _gemini_transcribe(model: ChatGoogleGenerativeAI, audio: bytes, mime_type: s
                         "base64": base64.b64encode(audio).decode(),
                         "mime_type": mime_type,
                     },
+                ]
+            )
+        ]
+    )
+    return Transcription(reply.text.strip(), *_gemini_usage(reply, LLM_MODEL))
+
+
+_READ_PAGE_PROMPT = (
+    "This is a scanned page of a document. Transcribe all the text on it verbatim, "
+    "in reading order and in its original language. Write tables as Markdown tables. "
+    "Reply with the text only, no comments. If the page has no text, reply with nothing."
+)
+
+
+def _gemini_read_image(model: ChatGoogleGenerativeAI, image: bytes, mime_type: str):
+    reply = model.invoke(
+        [
+            HumanMessage(
+                content=[
+                    {"type": "text", "text": _READ_PAGE_PROMPT},
+                    images.image_block(image, mime_type),
                 ]
             )
         ]
@@ -242,6 +273,35 @@ def synthesize(text: str) -> bytes:
     result = tts(text)
     usage.record("text_to_speech", result.model, result.input_tokens, result.output_tokens)
     return result.wav
+
+
+def vision_supported() -> bool:
+    """Whether the current provider can read text off images, e.g. scanned PDF pages."""
+    return _provider().read_image is not None
+
+
+def vision_model() -> str:
+    """The name the usage ledger prices vision calls by."""
+    return _provider().vision_model
+
+
+# What transcribing one scanned page is expected to cost, for estimates made before
+# any call: a page rendered at 150 dpi plus the prompt in, a dense page of text out.
+PAGE_TRANSCRIPTION_INPUT_TOKENS = 1600
+PAGE_TRANSCRIPTION_OUTPUT_TOKENS = 800
+
+
+def transcribe_page(image: bytes, mime_type: str) -> str:
+    """The text on `image`, a rendered page of a Document (e.g. a scanned PDF page)."""
+    read = _provider().read_image
+    if read is None:
+        raise VisionUnavailable("This model provider can't read images.")
+    from perry import usage
+
+    usage.check_turn_ceiling()
+    result = read(image, mime_type)
+    usage.record("transcription", result.model, result.input_tokens, result.output_tokens)
+    return result.text
 
 
 # --- Usage recording -----------------------------------------------------------

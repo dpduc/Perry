@@ -7,6 +7,7 @@ toward the daily cap and is refused, before any model call, if it would exceed i
 """
 
 import argparse
+import logging
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,7 +15,17 @@ from pathlib import Path
 from pgvector import Vector
 
 from perry import db, models, usage
-from perry.documents import content_hash, find_files, parse
+from perry.documents import (
+    Chunk,
+    ParsedDocument,
+    content_hash,
+    find_files,
+    page_chunks,
+    parse,
+    render_page,
+)
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -22,7 +33,8 @@ class IngestResult:
     name: str
     status: str  # "ingested" | "unchanged" | "failed"
     chunks: int = 0
-    pages_without_text: tuple[int, ...] = ()
+    # Pages with no text whose transcription failed, so nothing on them is searchable.
+    untranscribed_pages: tuple[int, ...] = ()
     error: str = ""
 
     def describe(self) -> str:
@@ -31,9 +43,9 @@ class IngestResult:
         if self.status == "failed":
             return f"{self.name}: failed ({self.error})"
         message = f"{self.name}: {self.chunks} chunks"
-        if self.pages_without_text:
-            pages = ", ".join(map(str, self.pages_without_text))
-            message += f" (skipped pages with no text: {pages})"
+        if self.untranscribed_pages:
+            pages = ", ".join(map(str, self.untranscribed_pages))
+            message += f" (couldn't transcribe pages with no text: {pages})"
         return message
 
 
@@ -88,10 +100,23 @@ def estimate_file(path: Path) -> list[EstimatedCall] | None:
     if _unchanged(path):
         return None
     parsed = parse(path)
-    texts = [chunk.text for chunk in parsed.chunks]
-    if not texts:
-        return []
-    return [EstimatedCall("embedding", models.embedding_model(), models.estimate_tokens(texts))]
+    calls: list[EstimatedCall] = []
+    embedding_tokens = models.estimate_tokens([chunk.text for chunk in parsed.chunks])
+    if models.vision_supported():
+        # One call per page without text; what it reads off the page is embedded too.
+        for _ in parsed.pages_without_text:
+            calls.append(
+                EstimatedCall(
+                    "transcription",
+                    models.vision_model(),
+                    models.PAGE_TRANSCRIPTION_INPUT_TOKENS,
+                    models.PAGE_TRANSCRIPTION_OUTPUT_TOKENS,
+                )
+            )
+            embedding_tokens += models.PAGE_TRANSCRIPTION_OUTPUT_TOKENS
+    if embedding_tokens:
+        calls.append(EstimatedCall("embedding", models.embedding_model(), embedding_tokens))
+    return calls
 
 
 def estimate_ingestion(paths: list[Path]) -> IngestionEstimate:
@@ -127,8 +152,10 @@ def ingest_file(path: Path, *, embed=models.embed_documents) -> IngestResult:
         return IngestResult(path.name, "unchanged")
 
     parsed = parse(path)
-    # Embed before touching the database, so a failed API call leaves the old version intact.
-    embeddings = embed([c.text for c in parsed.chunks]) if parsed.chunks else []
+    # Call the models before touching the database, so a failed call leaves the old version intact.
+    transcribed, untranscribed = _transcribe_pages(path, parsed)
+    chunks = sorted([*parsed.chunks, *transcribed], key=lambda chunk: chunk.page)
+    embeddings = embed([c.text for c in chunks]) if chunks else []
 
     with db.pool().connection() as conn, conn.transaction():
         conn.execute("DELETE FROM documents WHERE name = %s", (parsed.name,))
@@ -141,13 +168,29 @@ def ingest_file(path: Path, *, embed=models.embed_documents) -> IngestResult:
                 "INSERT INTO chunks (document_id, page, text, embedding) VALUES (%s, %s, %s, %s)",
                 [
                     (document_id, chunk.page, chunk.text, Vector(embedding))
-                    for chunk, embedding in zip(parsed.chunks, embeddings, strict=True)
+                    for chunk, embedding in zip(chunks, embeddings, strict=True)
                 ],
             )
 
-    return IngestResult(
-        parsed.name, "ingested", len(parsed.chunks), tuple(parsed.pages_without_text)
-    )
+    return IngestResult(parsed.name, "ingested", len(chunks), untranscribed)
+
+
+def _transcribe_pages(path: Path, parsed: ParsedDocument) -> tuple[list[Chunk], tuple[int, ...]]:
+    """Chunks of the pages without text (e.g. scanned pages), read by the vision model,
+    and the pages whose transcription failed."""
+    chunks: list[Chunk] = []
+    failed: list[int] = []
+    for page in parsed.pages_without_text:
+        try:
+            text = models.transcribe_page(render_page(path, page), "image/png")
+        except usage.TurnTokenCeilingReached:
+            raise
+        except Exception:  # the rest of the Document is still worth storing
+            log.warning("Couldn't transcribe page %d of %s", page, path.name, exc_info=True)
+            failed.append(page)
+            continue
+        chunks.extend(page_chunks(page, text))
+    return chunks, tuple(failed)
 
 
 class OverBudget(Exception):

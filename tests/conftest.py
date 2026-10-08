@@ -1,7 +1,9 @@
+import base64
 import os
 from dataclasses import dataclass
 
 import psycopg
+import pymupdf
 import pytest
 from psycopg import sql
 
@@ -139,3 +141,20 @@ def prices(tmp_path, monkeypatch):
         path.write_text("\n".join(lines), encoding="utf-8")
 
     return write
+
+
+# A 1x1 PNG, standing in for a scanned page.
+PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+)
+
+
+@pytest.fixture
+def half_scanned_pdf(tmp_path):
+    """report.pdf: page 1 has text (46 characters), page 2 is only an image, as if scanned."""
+    path = tmp_path / "report.pdf"
+    with pymupdf.open() as pdf:
+        pdf.new_page().insert_text((72, 72), "The marketing budget for Q3 is 40,000 dollars.")
+        pdf.new_page().insert_image(pymupdf.Rect(72, 72, 300, 300), stream=PNG)
+        pdf.save(path)
+    return path
