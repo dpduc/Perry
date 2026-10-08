@@ -28,6 +28,16 @@ Documents can also be uploaded from the UI sidebar. Uploading a file with the sa
 
 Push to talk: record with the microphone under the chat box and stop to send. Perry shows the transcription as your message and reads its answer aloud (text-to-speech model: `PERRY_TTS_MODEL`). Speech counts toward usage like any other model call.
 
+## Eval set
+
+```powershell
+uv run python -m evals --list            # the eval Turns
+uv run python -m evals                   # run them all against the real model
+uv run python -m evals knowledge-aphids  # only Turns whose id starts with this
+```
+
+Each eval Turn ([evals/turns/](evals/turns/), one file per Agent) says which Agents must be consulted and which Citations the answer must contain; those checks pass or fail the run. An LLM judge also scores answer quality, which is only reported (and logged to the LangSmith project `perry-eval` when tracing is on). The run uses its own `perry_eval` database loaded from [evals/documents/](evals/documents/), and a fake calendar and mailbox ([evals/workspace.py](evals/workspace.py)) instead of Google. It isn't part of `uv run pytest` or the pre-commit hook, because it spends real requests: with pacing, a full run takes about 15 minutes on the free tier.
+
 ## Connecting Google (Task Agent)
 
 The Task Agent reads your calendar and email (Read Actions only for now). Use a **test Google account containing only fake data**: on the free tier, what Perry reads is sent to Gemini.
