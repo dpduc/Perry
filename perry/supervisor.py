@@ -153,16 +153,15 @@ def run_turn(
 ) -> TurnResult:
     """Answer `message`, with any attached image files given to the model as well.
     Returns the answer, or the Confirmation the Turn is waiting for."""
-    try:
-        usage.check_daily_cap()
-    except usage.DailyCapReached as refused:
-        return str(refused)
-    request = user_message(message, images)
     config = _config(thread_id)
     graph = supervisor()
     cancelled = _cancel_pending(graph, config)
-    before = graph.get_state(config)
-    outcome = _run(graph, config, {"messages": [request]}, before, request)
+    if refused := usage.daily_cap_refusal():
+        outcome = refused
+    else:
+        request = user_message(message, images)
+        before = graph.get_state(config)
+        outcome = _run(graph, config, {"messages": [request]}, before, request)
     if cancelled and isinstance(outcome, str):
         return f"{cancelled}\n\n{outcome}"
     return outcome

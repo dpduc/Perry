@@ -54,3 +54,22 @@ def test_daily_cap_defaults_to_one_dollar(perry, prices, monkeypatch):
     perry.send("Sure?")
 
     assert perry.send("Hello again").startswith("Perry has used today's budget of $1.00")
+
+
+def test_new_message_after_the_daily_cap_still_cancels_the_pending_confirmation(
+    perry, cap, workspace
+):
+    from perry.supervisor import Approve, Confirmation
+
+    perry.script(
+        with_usage(call("ask_task_agent", request="Email Sam that I'm late."), 10_000),
+        call("send_email", to="sam@example.com", subject="Late", body="Running late."),
+    )
+    assert isinstance(perry.send("Tell Sam I'm late"), Confirmation)
+
+    reply = perry.send("Hello?")  # no model call is scripted
+
+    assert "cancelled" in reply.lower()
+    assert reply.endswith("until the budget resets at midnight.")
+    assert "nothing waiting" in perry.resume(Approve()).lower()
+    assert workspace.sent == []

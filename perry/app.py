@@ -117,10 +117,9 @@ def hear(recording: str | None, history: list[dict]):
     """Push-to-talk: transcribe the recording and show it as the user's message."""
     if not recording:
         return gr.skip(), history, None, False
-    try:
-        usage.check_daily_cap()  # transcribing is a model call, so it waits for the cap too
-    except usage.DailyCapReached as refused:
-        return EMPTY, [*history, {"role": "assistant", "content": str(refused)}], None, False
+    # Transcribing is a model call, so it waits for the cap too.
+    if refused := usage.daily_cap_refusal():
+        return EMPTY, [*history, {"role": "assistant", "content": refused}], None, False
     try:
         transcript = models.transcribe(Path(recording).read_bytes(), "audio/wav")
     except Exception as error:  # noqa: BLE001 - tell the user, keep the UI usable

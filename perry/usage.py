@@ -115,6 +115,15 @@ def check_daily_cap() -> None:
         raise DailyCapReached(daily_cap_usd())
 
 
+def daily_cap_refusal() -> str | None:
+    """What to tell the user when the daily cap stops something new; None if it doesn't."""
+    try:
+        check_daily_cap()
+    except DailyCapReached as refused:
+        return str(refused)
+    return None
+
+
 def record(kind: str, model: str, input_tokens: int, output_tokens: int = 0) -> None:
     """Add one model call to the ledger, priced with the current price table.
 
