@@ -8,6 +8,7 @@ pending Confirmation cancels it. Confirmations are LangGraph interrupts raised b
 Task Agent's Confirmation gate, kept in the Thread's checkpoint.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import cache
 from pathlib import Path
@@ -247,41 +248,53 @@ def pending_confirmation(thread_id: str) -> Confirmation | None:
     return _confirmation(interrupts[0].value) if interrupts else None
 
 
+def _ceiling_reply(ceiling: usage.TurnTokenCeilingReached) -> str:
+    return f"I stopped because this Turn reached its limit of {ceiling.ceiling:,} tokens."
+
+
+# Deliberate stops, and what the user is told when one ends a Turn early.
+_STOP_REPLIES: dict[type[BaseException], Callable[[Any], str]] = {
+    usage.TurnTokenCeilingReached: _ceiling_reply,
+    GraphRecursionError: lambda _: (
+        f"I stopped after {MAX_STEPS_PER_TURN} steps without finishing. "
+        "Try splitting the request into smaller ones."
+    ),
+    # The model client already retried with backoff before giving up.
+    models.RateLimitError: lambda _: (
+        "The model's rate limit was reached and retrying didn't help. Try again in a minute."
+    ),
+    workspace.ReconnectNeeded: str,
+    privacy.Refused: str,
+}
+_DELIBERATE_STOPS = tuple(_STOP_REPLIES)
+
+
 def _run(run: _TurnRun, run_input) -> TurnResult:
     """Run (or, with no `request`, resume) a Turn and clean up the Thread if it stops early."""
-
-    def stop(reply: str) -> str:
-        if run.request is None:
-            _abandon_confirmation(run, reply)
-        else:
-            _forget_turn(run)
-        return reply
-
     try:
         with usage.turn(run.thread_id, run.turn_id):
             result = run.graph.invoke(run_input, run.config)
-    except usage.TurnTokenCeilingReached as ceiling:
-        if run.request is None:
-            return stop(f"I stopped because this Turn reached its limit of {ceiling.ceiling:,} tokens.")
-        return _stop_at_ceiling(run, ceiling)
-    except GraphRecursionError:
-        return stop(
-            f"I stopped after {MAX_STEPS_PER_TURN} steps without finishing. "
-            "Try splitting the request into smaller ones."
-        )
-    except models.RateLimitError:
-        # The model client already retried with backoff before giving up.
-        return stop(
-            "The model's rate limit was reached and retrying didn't help. Try again in a minute."
-        )
-    except (workspace.ReconnectNeeded, privacy.Refused) as error:
-        return stop(str(error))
+    except _DELIBERATE_STOPS as stopped:
+        if isinstance(stopped, usage.TurnTokenCeilingReached) and run.request is not None:
+            return _stop_at_ceiling(run, stopped)
+        reply = next(say for kind, say in _STOP_REPLIES.items() if isinstance(stopped, kind))
+        return _stop(run, reply(stopped))
     except BaseException as error:
-        stop(f"Something went wrong: {type(error).__name__}.")
+        _stop(run, f"Something went wrong: {type(error).__name__}.")
         raise
     if interrupts := result.get("__interrupt__"):
         return _confirmation(interrupts[0].value)
     return _final_answer(result["messages"])
+
+
+def _stop(run: _TurnRun, reply: str) -> str:
+    """End a Turn that stopped early: a resumed one keeps `reply` as its answer, a new one
+    is forgotten so a retry doesn't repeat it."""
+    if run.request is None:
+        _abandon_confirmation(run, reply)
+    else:
+        _forget_turn(run)
+    return reply
 
 
 def agent_results(messages: list) -> list[ToolMessage]:
@@ -388,7 +401,7 @@ def _stop_at_ceiling(run: _TurnRun, ceiling: usage.TurnTokenCeilingReached) -> s
         for m in run.graph.get_state(run.config).values.get("messages", [])
         if m.id not in kept and m.type == "tool" and m.text
     ]
-    reply = f"I stopped because this Turn reached its limit of {ceiling.ceiling:,} tokens."
+    reply = _ceiling_reply(ceiling)
     if findings:
         reply += " Here is what I found so far:\n\n" + "\n\n".join(findings)
     else:
@@ -402,7 +415,7 @@ def _stop_at_ceiling(run: _TurnRun, ceiling: usage.TurnTokenCeilingReached) -> s
 
 def thread_history(thread_id: str) -> list[dict]:
     """The Thread as user/assistant messages, without the Agent calls in between."""
-    state = supervisor().get_state({"configurable": {"thread_id": thread_id}})
+    state = supervisor().get_state(_config(thread_id))
     history, turn = [], []
     for msg in state.values.get("messages", []):
         turn.append(msg)
