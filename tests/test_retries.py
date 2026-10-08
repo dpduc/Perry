@@ -47,7 +47,21 @@ def test_tool_marked_never_retry_runs_once_and_its_failure_is_reported():
 
     assert len(runs) == 1
     assert "send_email() failed once" in reply
-    assert "no result" in reply
+    # It may have done something before failing, so nothing is claimed about its effect.
+    assert "no result" not in reply
+    assert "outcome is unknown" in reply
+    assert "may already have been performed" in reply
+    assert "check" in reply
+
+
+def test_retried_tools_failure_says_it_produced_no_result():
+    def run() -> str:
+        raise TimeoutError("provider timed out")
+
+    reply = ask(agent_with(tool("lookup", run, description="Does a thing.")))
+
+    assert "lookup() failed twice" in reply
+    assert "produced no result" in reply
 
 
 def test_never_retry_works_as_a_decorator_on_a_tool():

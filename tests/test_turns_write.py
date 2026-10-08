@@ -150,6 +150,9 @@ def test_task_agent_failing_after_a_write_action_is_not_rerun(perry, workspace):
 
     assert len(workspace.sent) == 1  # a retry would have re-run the Task Agent
     assert "failed once" in reply
+    assert "no result" not in reply  # the email was in fact sent
+    assert "outcome is unknown" in reply
+    assert "may already have been performed" in reply
 
 
 def test_chained_turn_pauses_at_the_write_action_in_the_middle(perry, workspace):
