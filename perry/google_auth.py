@@ -7,14 +7,15 @@ never in the repo, Postgres or the sandbox. Nothing else in Perry reads it.
 import json
 import os
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 
-from perry import workspace
-from perry.workspace import Status
+from perry import privacy, workspace
+from perry.workspace import AccountKind, Status
 
 # The narrowest scopes covering every agreed Workspace operation, Read and Write,
 # so there is a single consent screen:
@@ -52,8 +53,18 @@ def token_file() -> Path:
     return path
 
 
-def connect() -> None:
-    """Run the consent flow in the browser (blocks until done) and keep the sign-in."""
+def connect(kind: AccountKind, *, consent: Callable[[], Credentials] | None = None) -> None:
+    """Connect a test or real account: ask Google for consent and keep the sign-in.
+
+    Raises privacy.Refused, before asking Google, if this kind of account may not be
+    connected. `consent` runs the browser flow (blocks until done) unless given.
+    """
+    privacy.check_connect(kind)
+    save((consent or _browser_consent)(), kind)
+    privacy.connected(kind)
+
+
+def _browser_consent() -> Credentials:
     from google_auth_oauthlib.flow import InstalledAppFlow
 
     if not client_file().exists():
@@ -62,14 +73,16 @@ def connect() -> None:
         )
     flow = InstalledAppFlow.from_client_secrets_file(str(client_file()), SCOPES)
     # prompt=consent makes Google return a refresh token even on a repeat connect.
-    creds = flow.run_local_server(
+    return flow.run_local_server(
         host="127.0.0.1", port=0, open_browser=True, prompt="consent", access_type="offline"
     )
-    save(creds)
 
 
-def save(creds: Credentials) -> None:
-    _write({"credentials": json.loads(creds.to_json()), "needs_reconnecting": False})
+def save(creds: Credentials, kind: AccountKind | None = None) -> None:
+    """Keep the sign-in. Without `kind`, the account keeps the kind it was declared as."""
+    if kind is None:
+        kind = (_read() or {}).get("account")
+    _write({"credentials": json.loads(creds.to_json()), "needs_reconnecting": False, "account": kind})
 
 
 def _read() -> dict | None:
@@ -93,6 +106,17 @@ def status() -> Status:
     if stored is None:
         return "not connected"
     return "needs reconnecting" if stored.get("needs_reconnecting") else "connected"
+
+
+def account_kind() -> AccountKind | None:
+    """The kind declared when connecting, or None if nothing is connected.
+
+    A sign-in kept before the kind was asked counts as real until reconnected.
+    """
+    stored = _read()
+    if stored is None:
+        return None
+    return "test" if stored.get("account") == "test" else "real"
 
 
 def mark_needs_reconnecting() -> None:

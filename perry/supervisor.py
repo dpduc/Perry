@@ -8,7 +8,7 @@ from langchain_core.tools import tool
 from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.errors import GraphRecursionError
 
-from perry import db, models, usage, workspace
+from perry import db, models, privacy, usage, workspace
 from perry.agents import knowledge, task
 
 # Each step is one Supervisor decision (call an Agent, or answer).
@@ -88,7 +88,7 @@ def run_turn(thread_id: str, message: str) -> str:
         _forget_turn(graph, config, before)
         # The model client already retried with backoff before giving up.
         return "The model's rate limit was reached and retrying didn't help. Try again in a minute."
-    except workspace.ReconnectNeeded as error:
+    except (workspace.ReconnectNeeded, privacy.Refused) as error:
         _forget_turn(graph, config, before)
         return str(error)
     except BaseException:

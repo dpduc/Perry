@@ -13,7 +13,7 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 from perry import google_auth, workspace
-from perry.workspace import Email, Event, Status
+from perry.workspace import AccountKind, Email, Event, Status
 
 T = TypeVar("T")
 
@@ -23,6 +23,9 @@ MAX_EVENTS = 100
 class GoogleWorkspace:
     def status(self) -> Status:
         return google_auth.status()
+
+    def account_kind(self) -> AccountKind | None:
+        return google_auth.account_kind()
 
     def _service(self, name: str, version: str):
         return build(name, version, credentials=google_auth.credentials(), cache_discovery=False)

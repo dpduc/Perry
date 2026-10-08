@@ -113,10 +113,12 @@ def _is_callable_step(step: Any) -> bool:
     return callable(step) and not isinstance(step, (BaseMessage, ToolCall))
 
 
-def fake_provider(chat: ScriptedChatModel) -> Provider:
+def fake_provider(chat: ScriptedChatModel, *, local: bool = False) -> Provider:
+    """Fake models; `local=True` makes text generation count as local (for privacy checks)."""
     return Provider(
         chat_model=lambda: chat,
         embed_documents=fake_embed,
         embed_query=fake_embed_one,
         embedding_model="fake-embedding",
+        local_text_generation=local,
     )
