@@ -130,8 +130,38 @@ def fake_synthesize(text: str) -> Speech:
     return Speech(spoken(text), "fake-tts", 10, 200)
 
 
-def fake_provider(chat: ScriptedChatModel, *, speech: bool = True, local: bool = False) -> Provider:
+class FakeVision:
+    """Reads images (e.g. scanned PDF pages) with scripted replies, in call order.
+
+    A reply that is an Exception is raised instead. Running out of replies fails the
+    test: something was sent for transcription that nobody expected.
+    """
+
+    model = "fake-vision"
+
+    def __init__(self, *replies: str | Exception):
+        self.replies = list(replies)
+        self.images: list[tuple[bytes, str]] = []
+
+    def __call__(self, image: bytes, mime_type: str) -> Transcription:
+        self.images.append((image, mime_type))
+        if not self.replies:
+            raise AssertionError(f"Unexpected transcription #{len(self.images)}")
+        reply = self.replies.pop(0)
+        if isinstance(reply, Exception):
+            raise reply
+        return Transcription(reply, self.model, 300, 50)
+
+
+def fake_provider(
+    chat: ScriptedChatModel,
+    *,
+    speech: bool = True,
+    local: bool = False,
+    vision: FakeVision | None = None,
+) -> Provider:
     """Fake models; `local=True` makes text generation count as local (for privacy checks)."""
+    vision = vision or FakeVision()
     return Provider(
         chat_model=lambda: chat,
         embed_documents=fake_embed,
@@ -139,5 +169,7 @@ def fake_provider(chat: ScriptedChatModel, *, speech: bool = True, local: bool =
         embedding_model="fake-embedding",
         transcribe=fake_transcribe if speech else None,
         synthesize=fake_synthesize if speech else None,
+        read_image=vision,
+        vision_model=vision.model,
         local_text_generation=local,
     )
