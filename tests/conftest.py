@@ -128,12 +128,7 @@ class Perry:
         """The Agent tools the Supervisor called during the latest Turn, in order."""
         from perry import supervisor
 
-        if self.thread_id is None:
-            return []
-        state = supervisor.supervisor().get_state({"configurable": {"thread_id": self.thread_id}})
-        messages = state.values.get("messages", [])
-        last_user = max((i for i, m in enumerate(messages) if m.type == "human"), default=-1)
-        return [m.name for m in messages[last_user + 1 :] if m.type == "tool"]
+        return supervisor.agents_consulted(self.thread_id) if self.thread_id else []
 
 
 @pytest.fixture

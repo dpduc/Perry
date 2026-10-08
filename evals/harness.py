@@ -1,7 +1,7 @@
 """Run one eval Turn: hard checks on routing and Citations, plus a non-gating LLM judge score.
 
 The harness drives Turns through anything with `send(message) -> reply` and
-`consulted() -> [Agent tool names]`: the real `Session` below, or the tests' `perry` fixture.
+`consulted() -> [Agent tool names]`: the real `EvalThread` in `evals/__main__.py`, or the tests' `perry` fixture.
 """
 
 import json

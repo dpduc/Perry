@@ -30,7 +30,7 @@ from evals.turns import DATASETS_DIR, DOCUMENTS_DIR, all_turns
 LANGSMITH_PROJECT = "perry-eval"
 
 
-class Session:
+class EvalThread:
     """One Thread driven like the chat UI: `send()` a message, ask who was `consulted()`."""
 
     def __init__(self):
@@ -53,12 +53,7 @@ class Session:
         """The Agent tools the Supervisor called during the latest Turn."""
         from perry import supervisor
 
-        if self.thread_id is None:
-            return []
-        config = {"configurable": {"thread_id": self.thread_id}}
-        messages = supervisor.supervisor().get_state(config).values.get("messages", [])
-        last_user = max((i for i, m in enumerate(messages) if m.type == "human"), default=-1)
-        return [m.name for m in messages[last_user + 1 :] if m.type == "tool"]
+        return supervisor.agents_consulted(self.thread_id) if self.thread_id else []
 
 
 @contextmanager
@@ -117,7 +112,7 @@ def run(turns: list[EvalTurn]) -> list[Result]:
     for number, turn in enumerate(turns, 1):
         print(f"[{number}/{len(turns)}] {turn.id}: {turn.message}", flush=True)
         with _traced(turn) as log:
-            result = run_eval_turn(turn, Session())
+            result = run_eval_turn(turn, EvalThread())
             log(result)
         print(f"    {_summary(result)}", flush=True)
         results.append(result)
