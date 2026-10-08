@@ -8,7 +8,7 @@ from langchain.agents import create_agent
 from langchain_core.messages import BaseMessage
 from langchain_core.tools import ToolException, tool
 
-from perry import datasets, models
+from perry import datasets, models, retries
 
 SYSTEM_PROMPT = """You are Perry's Analysis Agent. You answer questions about the user's \
 Datasets (tables uploaded from CSV or spreadsheet files) by querying them with SQL.
@@ -62,6 +62,7 @@ def analysis_agent():
     return create_agent(
         models.chat_model(),
         tools=[list_datasets, run_sql],
+        middleware=[retries.RetryFailedSteps()],
         system_prompt=SYSTEM_PROMPT.format(row_limit=datasets.ROW_LIMIT),
         name="analysis_agent",
     )

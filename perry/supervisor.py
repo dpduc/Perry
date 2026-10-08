@@ -9,7 +9,7 @@ from langchain_core.tools import tool
 from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.errors import GraphRecursionError
 
-from perry import db, models, usage, workspace
+from perry import db, models, retries, usage, workspace
 from perry.agents import analysis, knowledge, task
 from perry.images import user_message
 
@@ -32,7 +32,9 @@ rather than answering from general knowledge.
 - Keep every citation in square brackets exactly as the Agent gave it.
 - If an Agent reports it couldn't find something, tell the user so. Never invent results.
 - Small talk and questions about yourself need no Agent.
-- When the Analysis Agent shows the SQL it used, include that SQL unchanged in your answer."""
+- When the Analysis Agent shows the SQL it used, include that SQL unchanged in your answer.
+- If a step comes back FAILED, give the results of the steps that worked, then say which \
+step failed. Never guess what a failed step would have returned."""
 
 
 @tool
@@ -71,6 +73,9 @@ def supervisor():
             ask_knowledge_agent,
             ask_task_agent,
             ask_analysis_agent,
+        ],
+        middleware=[
+            retries.RetryFailedSteps(),
         ],
         system_prompt=SYSTEM_PROMPT,
         checkpointer=_checkpointer(),

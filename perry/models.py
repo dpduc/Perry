@@ -16,7 +16,9 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import cache
 
+import httpx
 from langchain_core.callbacks import BaseCallbackHandler
+from langchain_core.exceptions import ModelError
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.rate_limiters import InMemoryRateLimiter
@@ -27,6 +29,15 @@ from perry import images
 
 # The provider's "quota exhausted" error, so callers can report it without knowing the provider.
 RateLimitError = GoogleRateLimitError
+
+
+def is_transient(error: BaseException) -> bool:
+    """Whether a call that raised `error` could succeed if tried again a little later:
+    rate limits, timeouts, dropped connections and the provider's own server errors."""
+    if isinstance(error, ModelError):
+        return error.is_retryable
+    # The Gemini client lets network timeouts and connection drops through as httpx errors.
+    return isinstance(error, (TimeoutError, ConnectionError, httpx.TransportError))
 
 LLM_MODEL = os.getenv("PERRY_LLM_MODEL", "gemini-3.8-flash")
 EMBEDDING_MODEL = os.getenv("PERRY_EMBEDDING_MODEL", "gemini-embedding-001")
