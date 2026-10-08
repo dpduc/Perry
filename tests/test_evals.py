@@ -68,8 +68,8 @@ def test_reply_without_the_required_citation_fails_the_citation_check(perry):
     perry.script(
         call("ask_knowledge_agent", question="What is the Q3 marketing budget?"),
         call("search_documents", query="Q3 marketing budget"),
-        "The Q3 marketing budget is 40,000 dollars [budget.md].",
-        "Your Q3 marketing budget is 40,000 dollars.",  # Supervisor drops the Citation
+        "The Q3 marketing budget is 40,000 dollars.",  # the Knowledge Agent drops the Citation
+        "Your Q3 marketing budget is 40,000 dollars.",
         '{"score": 5, "comment": "Correct."}',
     )
 

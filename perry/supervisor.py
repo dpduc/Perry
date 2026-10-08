@@ -281,14 +281,29 @@ def _run(run: _TurnRun, run_input) -> TurnResult:
         raise
     if interrupts := result.get("__interrupt__"):
         return _confirmation(interrupts[0].value)
-    return _answer_with_charts(result["messages"])
+    return _final_answer(result["messages"])
 
 
-def _answer_with_charts(messages: list) -> str:
-    """The Turn's final answer, keeping every chart an Agent made during the Turn."""
+def agent_results(messages: list) -> list[ToolMessage]:
+    """What each Agent the Supervisor consulted in the latest Turn returned, in order:
+    the tool messages since the last user message."""
     last_user = max((i for i, m in enumerate(messages) if m.type == "human"), default=-1)
-    tool_results = [m.text for m in messages[last_user + 1 :] if m.type == "tool"]
-    return charts.keep(messages[-1].text, tool_results)
+    return [m for m in messages[last_user + 1 :] if m.type == "tool"]
+
+
+def agents_consulted(thread_id: str) -> list[str]:
+    """The Agent tools the Supervisor called during the Thread's latest Turn, in order."""
+    messages = supervisor().get_state(_config(thread_id)).values.get("messages", [])
+    return [m.name for m in agent_results(messages)]
+
+
+def _final_answer(messages: list) -> str:
+    """The Turn's final answer, keeping every chart an Agent made and every Citation the
+    Knowledge Agent gave during the Turn."""
+    results = agent_results(messages)
+    answer = charts.keep(messages[-1].text, [m.text for m in results])
+    findings = [m.text for m in results if m.name == ask_knowledge_agent.name]
+    return knowledge.keep_citations(answer, findings)
 
 
 def _confirmation(request: dict) -> Confirmation:
@@ -395,5 +410,5 @@ def thread_history(thread_id: str) -> list[dict]:
             history.append({"role": "user", "content": msg.text})
             turn = [msg]
         elif msg.type == "ai" and not msg.tool_calls and msg.text:
-            history.append({"role": "assistant", "content": _answer_with_charts(turn)})
+            history.append({"role": "assistant", "content": _final_answer(turn)})
     return history

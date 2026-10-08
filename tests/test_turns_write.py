@@ -181,12 +181,13 @@ def test_chained_turn_pauses_at_the_write_action_in_the_middle(perry, workspace)
     assert "Revenue grew 12%" in pending.summary
     assert workspace.sent == []
 
-    perry.script(last_message, "Done: I emailed Sam the Q3 summary [q3-notes.md].")
+    # The Supervisor's answer drops the Citation; it comes back all the same.
+    perry.script(last_message, "Done: I emailed Sam the Q3 summary.")
     reply = perry.resume(Approve())
 
     assert [e.subject for e in workspace.sent] == ["Q3 summary"]
     assert perry.consulted() == ["ask_knowledge_agent", "ask_task_agent"]
-    assert reply == "Done: I emailed Sam the Q3 summary [q3-notes.md]."
+    assert reply == "Done: I emailed Sam the Q3 summary.\n\nCitations: [q3-notes.md]"
     assert perry.history()[-1] == {"role": "assistant", "content": reply}
 
 
