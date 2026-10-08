@@ -16,9 +16,32 @@ from perry import (
     usage,
     workspace,
 )
-from perry.supervisor import run_turn, thread_history
+from perry.supervisor import (
+    Approve,
+    Confirmation,
+    Reject,
+    pending_confirmation,
+    resume_turn,
+    run_turn,
+    thread_history,
+)
 
 EMPTY = {"text": "", "files": []}
+
+# Every field a Write Action can have: (label, lines, editable). The Confirmation card
+# shows the ones its Write Action takes.
+CARD_FIELDS = {
+    "to": ("To (comma-separated)", 1, True),
+    "subject": ("Subject", 1, True),
+    "body": ("Message", 6, True),
+    "title": ("Title", 1, True),
+    "start": ("Start (YYYY-MM-DDTHH:MM)", 1, True),
+    "end": ("End (YYYY-MM-DDTHH:MM)", 1, True),
+    "location": ("Location", 1, True),
+    "attendees": ("Invite (comma-separated emails)", 1, True),
+    "email_thread_id": ("Email thread", 1, False),
+    "event_id": ("Event", 1, False),
+}
 
 
 def show_user_message(message: dict, history: list[dict]):
@@ -33,14 +56,61 @@ def show_user_message(message: dict, history: list[dict]):
 
 
 def answer(message: dict, history: list[dict], thread_id: str | None):
+    """Run the Turn. Outputs: chat, Thread, Thread picker, then `show()`'s card outputs."""
     text, images = message.get("text", ""), message.get("files", [])
     if not text.strip() and not images:
-        return history, thread_id, gr.skip()
+        return history, thread_id, gr.skip(), *[gr.skip()] * (2 + len(CARD_FIELDS) + 2)
     if thread_id is None:
         thread_id = threads.create(text)
-    reply = run_turn(thread_id, text, images=images)
-    history = [*history, *charts.chat_messages(reply)]  # any charts show as images
-    return history, thread_id, gr.update(choices=threads.list_recent(), value=thread_id)
+    # A pending Confirmation is cancelled by this message; the reply says so.
+    outcome = run_turn(thread_id, text, images=images)
+    history, *card = show(outcome, history)
+    picker = gr.update(choices=threads.list_recent(), value=thread_id)
+    return history, thread_id, picker, *card
+
+
+def show(outcome: str | Confirmation, history: list[dict]):
+    """What a Turn's outcome looks like: the chat, then the Confirmation card's outputs
+    (waiting Confirmation, card, summary, each field, note)."""
+    if isinstance(outcome, Confirmation):
+        note = "This needs your Confirmation: check it below, edit if needed, then approve or reject."
+        return [*history, {"role": "assistant", "content": note}], *confirmation_card(outcome)
+    # Any charts in the answer show as images.
+    return [*history, *charts.chat_messages(outcome)], *confirmation_card(None)
+
+
+def confirmation_card(confirmation: Confirmation | None) -> list:
+    """Outputs: waiting Confirmation, card, summary, each of CARD_FIELDS, note."""
+    if confirmation is None:
+        hidden = [gr.update(visible=False, value="") for _ in CARD_FIELDS]
+        return [None, gr.update(visible=False), "", *hidden, ""]
+    fields = confirmation.fields
+    boxes = [
+        gr.update(visible=name in fields, value=str(fields.get(name, ""))) for name in CARD_FIELDS
+    ]
+    summary = f"**Perry will do this only if you approve:**\n\n```\n{confirmation.summary}\n```"
+    return [confirmation, gr.update(visible=True), summary, *boxes, ""]
+
+
+def approve(thread_id: str | None, waiting: Confirmation | None, history: list[dict], *values):
+    """Approve the waiting Write Action with the card's fields (edited or not)."""
+    if thread_id is None or waiting is None:
+        return history, *confirmation_card(None)
+    edits = {
+        name: value
+        for name, value in zip(CARD_FIELDS, values, strict=True)
+        if name in waiting.fields
+    }
+    return show(resume_turn(thread_id, Approve(edits)), history)
+
+
+def reject(thread_id: str | None, waiting: Confirmation | None, history: list[dict], note: str):
+    """Reject the waiting Write Action; the note goes to Perry to revise."""
+    if thread_id is None or waiting is None:
+        return history, *confirmation_card(None)
+    shown = f"Rejected: {note}" if note.strip() else "Rejected."
+    history = [*history, {"role": "user", "content": shown}]
+    return show(resume_turn(thread_id, Reject(note.strip())), history)
 
 
 def hear(recording: str | None, history: list[dict]):
@@ -88,16 +158,16 @@ def _text(content) -> str:
 
 def open_thread(thread_id: str | None):
     if not thread_id:
-        return [], None
+        return [], None, *confirmation_card(None)
     history = []
     for message in thread_history(thread_id):
         is_answer = message["role"] == "assistant"
         history += charts.chat_messages(message["content"]) if is_answer else [message]
-    return history, thread_id
+    return history, thread_id, *confirmation_card(pending_confirmation(thread_id))
 
 
 def new_thread():
-    return [], None, gr.update(value=None)
+    return [], None, gr.update(value=None), *confirmation_card(None)
 
 
 def propose_upload(files: list[str] | None):
@@ -221,6 +291,21 @@ def build() -> gr.Blocks:
             google_status = gr.Markdown()
 
         chatbot = gr.Chatbot(height="75vh", label="Perry")
+        # The Confirmation card: one Write Action, shown exactly as it will be performed.
+        waiting = gr.State(None)  # the Confirmation the card shows
+        with gr.Group(visible=False) as card:
+            card_summary = gr.Markdown()
+            card_fields = [
+                gr.Textbox(label=label, lines=lines, interactive=editable, visible=False)
+                for label, lines, editable in CARD_FIELDS.values()
+            ]
+            card_note = gr.Textbox(
+                label="Note for Perry if you reject (what to change)", lines=2
+            )
+            with gr.Row():
+                approve_button = gr.Button("Approve", variant="primary")
+                reject_button = gr.Button("Reject", variant="stop")
+        card_outputs = [waiting, card, card_summary, *card_fields, card_note]
         # Images (screenshots, photos) can be dropped or attached alongside the text.
         box = gr.MultimodalTextbox(
             placeholder="Ask Perry…",
@@ -238,17 +323,24 @@ def build() -> gr.Blocks:
             )
             speaker = gr.Audio(label="Perry's answer", autoplay=True, interactive=False)
 
+        answer_outputs = [chatbot, thread_id, thread_picker, *card_outputs]
         box.submit(show_user_message, [box, chatbot], [pending, chatbot, box]).then(
-            answer, [pending, chatbot, thread_id], [chatbot, thread_id, thread_picker]
+            answer, [pending, chatbot, thread_id], answer_outputs
         ).then(google_button, None, google)
         box.submit(lambda: False, None, spoken)
         mic.stop_recording(hear, [mic, chatbot], [pending, chatbot, mic, spoken]).then(
-            answer, [pending, chatbot, thread_id], [chatbot, thread_id, thread_picker]
+            answer, [pending, chatbot, thread_id], answer_outputs
         ).then(read_aloud, [spoken, chatbot], speaker).then(
             todays_usage, None, usage_status
         ).then(google_button, None, google)
-        thread_picker.input(open_thread, thread_picker, [chatbot, thread_id])
-        new_button.click(new_thread, None, [chatbot, thread_id, thread_picker])
+        approve_button.click(
+            approve, [thread_id, waiting, chatbot, *card_fields], [chatbot, *card_outputs]
+        ).then(google_button, None, google)
+        reject_button.click(
+            reject, [thread_id, waiting, chatbot, card_note], [chatbot, *card_outputs]
+        ).then(google_button, None, google)
+        thread_picker.input(open_thread, thread_picker, [chatbot, thread_id, *card_outputs])
+        new_button.click(new_thread, None, [chatbot, thread_id, thread_picker, *card_outputs])
         uploader.upload(
             propose_upload, uploader, [uploaded, upload_status, upload_choice]
         ).then(todays_usage, None, usage_status)

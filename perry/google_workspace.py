@@ -5,6 +5,7 @@ import html
 import re
 from collections.abc import Callable
 from datetime import date, datetime, time
+from email.mime.text import MIMEText
 from email.utils import getaddresses
 from typing import TypeVar
 
@@ -80,6 +81,122 @@ class GoogleWorkspace:
             return [_email(m, full=True) for m in thread.get("messages", [])]
 
         return _signed_in(run)
+
+    def get_event(self, event_id: str) -> Event | None:
+        def run():
+            try:
+                item = self._events().get(calendarId="primary", eventId=event_id).execute()
+            except HttpError as error:
+                if error.status_code in (400, 404, 410):
+                    return None
+                raise
+            return None if item.get("status") == "cancelled" else _event(item)
+
+        return _signed_in(run)
+
+    # Write Actions. Attendees are notified of calendar changes (sendUpdates="all").
+
+    def _events(self):
+        return self._service("calendar", "v3").events()
+
+    def send_email(self, to: tuple[str, ...], subject: str, body: str) -> Email:
+        message = MIMEText(body)
+        message["To"] = ", ".join(to)
+        message["Subject"] = subject
+        return self._send(message, subject, body, to)
+
+    def reply_email(self, email_thread_id: str, body: str) -> Email:
+        def latest():
+            thread = (
+                self._service("gmail", "v1")
+                .users()
+                .threads()
+                .get(
+                    userId="me",
+                    id=email_thread_id,
+                    format="metadata",
+                    metadataHeaders=["From", "Reply-To", "Subject", "Message-ID", "References"],
+                )
+                .execute()
+            )
+            last = thread["messages"][-1]
+            return {h["name"].lower(): h["value"] for h in last["payload"].get("headers", [])}
+
+        headers = _signed_in(latest)
+        subject = headers.get("subject", "")
+        if not subject.lower().startswith("re:"):
+            subject = f"Re: {subject}"
+        to = headers.get("reply-to") or headers.get("from", "")
+        message = MIMEText(body)
+        message["To"] = to
+        message["Subject"] = subject
+        if message_id := headers.get("message-id"):
+            message["In-Reply-To"] = message_id
+            message["References"] = f"{headers.get('references', '')} {message_id}".strip()
+        recipients = tuple(addr for _, addr in getaddresses([to]) if addr)
+        return self._send(message, subject, body, recipients, email_thread_id)
+
+    def _send(
+        self, message: MIMEText, subject: str, body: str, to: tuple[str, ...], thread_id: str = ""
+    ) -> Email:
+        raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
+        payload = {"raw": raw, **({"threadId": thread_id} if thread_id else {})}
+
+        def run():
+            return (
+                self._service("gmail", "v1").users().messages().send(userId="me", body=payload).execute()
+            )
+
+        sent = _signed_in(run)
+        return Email(
+            "me",
+            subject,
+            body,
+            datetime.now().astimezone(),
+            to,
+            sent["id"],
+            sent.get("threadId", thread_id),
+        )
+
+    def create_event(
+        self,
+        title: str,
+        start: datetime,
+        end: datetime,
+        location: str = "",
+        attendees: tuple[str, ...] = (),
+    ) -> Event:
+        body = {
+            "summary": title,
+            "start": {"dateTime": start.isoformat()},
+            "end": {"dateTime": end.isoformat()},
+            "location": location,
+            "attendees": [{"email": a} for a in attendees],
+        }
+        return _signed_in(
+            lambda: _event(
+                self._events()
+                .insert(calendarId="primary", body=body, sendUpdates="all")
+                .execute()
+            )
+        )
+
+    def move_event(self, event_id: str, start: datetime, end: datetime) -> Event:
+        body = {"start": {"dateTime": start.isoformat()}, "end": {"dateTime": end.isoformat()}}
+        return _signed_in(
+            lambda: _event(
+                self._events()
+                .patch(calendarId="primary", eventId=event_id, body=body, sendUpdates="all")
+                .execute()
+            )
+        )
+
+    def delete_event(self, event_id: str) -> None:
+        _signed_in(
+            lambda: self._events()
+            .delete(calendarId="primary", eventId=event_id, sendUpdates="all")
+            .execute()
+        )
 
 
 def _signed_in(call: Callable[[], T]) -> T:

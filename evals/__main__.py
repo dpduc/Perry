@@ -43,6 +43,12 @@ class Session:
             self.thread_id = threads.create(message)
         return supervisor.run_turn(self.thread_id, message)
 
+    def resume(self, decision):
+        """Answer the Confirmation the Turn waits for (Write Actions hit the fake Workspace)."""
+        from perry import supervisor
+
+        return supervisor.resume_turn(self.thread_id, decision)
+
     def consulted(self) -> list[str]:
         """The Agent tools the Supervisor called during the latest Turn."""
         from perry import supervisor
@@ -145,6 +151,7 @@ def _traced(turn: EvalTurn):
                 for key, score in [
                     ("routing", result.routing_ok),
                     ("citations", result.citations_ok),
+                    ("confirmations", result.confirmations_ok),
                     ("quality", result.quality),
                 ]:
                     if score is not None:
@@ -169,6 +176,9 @@ def _summary(result: Result) -> str:
         problems.append(f"consulted {result.consulted or 'no Agent'}, expected {expected}")
     if result.missing_citations:
         problems.append(f"missing Citations {result.missing_citations}")
+    if not result.confirmations_ok:
+        expected = list(result.turn.write_actions) or "none"
+        problems.append(f"Confirmations {result.confirmations or 'none'}, expected {expected}")
     quality = "n/a" if result.quality is None else f"{result.quality:.2f}"
     verdict = "FAIL" if problems else "pass"
     return "  ".join([verdict, f"quality {quality}", *problems, result.judge_comment]).rstrip()
