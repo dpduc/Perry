@@ -13,7 +13,7 @@ from datetime import date, datetime, time, timedelta
 from langchain.agents import create_agent
 from langchain_core.tools import tool
 
-from perry import models, retries, workspace
+from perry import models, privacy, retries, workspace
 from perry.workspace import Email, Event
 
 SYSTEM_PROMPT = """You are Perry's Task Agent. You look things up in the user's \
@@ -102,6 +102,8 @@ def task_agent():
 
 def ask(request: str) -> str:
     """Run a request against the Workspace. Raises workspace.ReconnectNeeded when
-    Google must be (re)connected first."""
+    Google must be (re)connected first, and privacy.Refused when the connected
+    account may not be read with the configured model."""
+    privacy.check_task_agent()
     result = task_agent().invoke({"messages": [{"role": "user", "content": request}]})
     return result["messages"][-1].text

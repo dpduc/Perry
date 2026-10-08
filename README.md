@@ -44,7 +44,12 @@ The Task Agent reads your calendar and email (Read Actions only for now). Use a 
 
 1. In [Google Cloud Console](https://console.cloud.google.com/), create a project, enable the **Google Calendar API** and **Gmail API**, and set up the OAuth consent screen (External). Add the scopes `calendar.events`, `gmail.readonly` and `gmail.send`, then **publish the app to production** so sign-ins don't expire after 7 days (an unverified personal app is fine; you click through the warning).
 2. Create an OAuth client of type **Desktop app**, download its JSON and save it as `%APPDATA%\Perry\google_client.json` (or point `PERRY_GOOGLE_CLIENT_FILE` at it). Never put it in the repo.
-3. Start Perry and click **Connect Google** in the sidebar. A browser tab asks for consent; afterwards the button reads "Google connected".
+3. Start Perry, choose **Test account** or **Real account** in the sidebar, and click **Connect Google**. A browser tab asks for consent; afterwards the button reads "Google connected".
+
+Privacy switches, enforced in code at connect time and at startup:
+- A **real account** is refused unless text generation runs on a local model (for now it's Gemini, so only test accounts connect). If a real account is already connected while a cloud model is configured, the Task Agent is off and says why.
+- While a real account is connected, LangSmith tracing is switched off, whatever `.env` says.
+- A sign-in kept before Perry asked for the kind counts as real: reconnect and choose **Test account**.
 
 The sign-in is kept in `%APPDATA%\Perry\google_token.json`, outside the repo, Postgres and the sandbox. If Google refuses it (expired or revoked), Perry answers "Google needs reconnecting" and the button turns into **Reconnect Google**.
 

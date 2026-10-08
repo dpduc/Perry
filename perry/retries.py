@@ -6,7 +6,8 @@ provider error, see `models.is_transient`), it is tried once more after a short
 backoff. If that fails too, the step's result becomes a failure report, so the
 Turn goes on and the answer can say what didn't work instead of making it up.
 Other errors are not retried and end the Turn as before: bugs, and deliberate
-stops such as `usage.TurnTokenCeilingReached` and `workspace.ReconnectNeeded`.
+stops such as `usage.TurnTokenCeilingReached`, `workspace.ReconnectNeeded` and
+`privacy.Refused`.
 
 Excluding a tool from retries
 -----------------------------

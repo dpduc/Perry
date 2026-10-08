@@ -4,7 +4,17 @@ from pathlib import Path
 
 import gradio as gr
 
-from perry import datasets, db, google_auth, ingest, models, threads, usage, workspace
+from perry import (
+    datasets,
+    db,
+    google_auth,
+    ingest,
+    models,
+    privacy,
+    threads,
+    usage,
+    workspace,
+)
 from perry.supervisor import run_turn, thread_history
 
 EMPTY = {"text": "", "files": []}
@@ -152,13 +162,24 @@ def google_button():
     return gr.update(value=label, variant=variant)
 
 
-def connect_google():
+ACCOUNT_KINDS = [("Test account (fake data only)", "test"), ("Real account", "real")]
+
+
+def connect_google(kind: str | None):
+    if kind is None:
+        return gr.skip(), "Choose whether this is a test or a real account first."
     try:
-        google_auth.connect()  # opens the browser and waits for consent
-        message = "Google connected."
+        google_auth.connect(kind)  # opens the browser and waits for consent
+        message = f"Google connected ({kind} account)."
+    except privacy.Refused as refusal:
+        message = str(refusal)
     except Exception as error:  # noqa: BLE001 - show it next to the button, keep the UI up
         message = f"Couldn't connect Google: {error}"
     return google_button(), message
+
+
+def privacy_notice() -> str:
+    return privacy.startup() or ""
 
 
 def build() -> gr.Blocks:
@@ -190,6 +211,7 @@ def build() -> gr.Blocks:
             datasets_shown = gr.Markdown(dataset_list)
             usage_status = gr.Markdown()
             gr.Markdown("### Calendar and email")
+            account_kind = gr.Radio(ACCOUNT_KINDS, value=None, label="Account")
             google = gr.Button()
             google_status = gr.Markdown()
 
@@ -236,10 +258,14 @@ def build() -> gr.Blocks:
         chatbot.change(todays_usage, None, usage_status)
         demo.load(todays_usage, None, usage_status)
         demo.load(google_button, None, google)
-        google.click(connect_google, None, [google, google_status])
+        demo.load(privacy_notice, None, google_status)
+        google.click(connect_google, account_kind, [google, google_status])
     return demo
 
 
 if __name__ == "__main__":
+    # Before anything runs: switches tracing off if a real account is connected.
+    if notice := privacy.startup():
+        print(notice)
     db.init_schema()
     build().launch(server_name="127.0.0.1")

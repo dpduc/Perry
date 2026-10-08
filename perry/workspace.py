@@ -14,6 +14,9 @@ from datetime import datetime
 from typing import Literal, Protocol
 
 Status = Literal["connected", "not connected", "needs reconnecting"]
+# Declared when connecting: a test account holds only fake data; a real one is yours.
+# See perry.privacy for what Perry refuses to do with a real account.
+AccountKind = Literal["test", "real"]
 
 
 class ReconnectNeeded(Exception):
@@ -62,6 +65,10 @@ class Email:
 class Workspace(Protocol):
     def status(self) -> Status: ...
 
+    def account_kind(self) -> AccountKind | None:
+        """The kind of the connected account, None if nothing is connected."""
+        ...
+
     def list_events(self, start: datetime, end: datetime) -> list[Event]:
         """Events overlapping [start, end), earliest first."""
         ...
@@ -85,6 +92,7 @@ class InMemoryWorkspace:
 
     events: list[Event] = field(default_factory=list)
     emails: list[Email] = field(default_factory=list)
+    account: AccountKind = "test"
     _status: Status = "connected"
 
     def disconnect(self, status: Status = "needs reconnecting") -> None:
@@ -92,6 +100,9 @@ class InMemoryWorkspace:
 
     def status(self) -> Status:
         return self._status
+
+    def account_kind(self) -> AccountKind | None:
+        return None if self._status == "not connected" else self.account
 
     def _check(self) -> None:
         if self._status == "not connected":
