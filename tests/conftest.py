@@ -2,6 +2,7 @@ import os
 
 import psycopg
 import pytest
+from psycopg import sql
 
 # Tests use their own database so they can never touch real Documents.
 ADMIN_URL = "postgresql://perry:perry@127.0.0.1:5433/perry"
@@ -33,6 +34,11 @@ def database():
     db.init_schema()
     with db.pool().connection() as conn:
         conn.execute("TRUNCATE documents, chunks, threads RESTART IDENTITY CASCADE")
+        conn.execute("TRUNCATE datasets")
+        tables = "SELECT tablename FROM pg_tables WHERE schemaname = 'analytics'"
+        for row in conn.execute(tables).fetchall():
+            table = sql.Identifier("analytics", row["tablename"])
+            conn.execute(sql.SQL("DROP TABLE {}").format(table))
         conn.execute("TRUNCATE usage_ledger")
     return db
 

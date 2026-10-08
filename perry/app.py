@@ -4,7 +4,7 @@ from pathlib import Path
 
 import gradio as gr
 
-from perry import db, google_auth, threads, usage, workspace
+from perry import datasets, db, google_auth, threads, usage, workspace
 from perry.ingest import ingest_file
 from perry.supervisor import run_turn, thread_history
 
@@ -45,6 +45,25 @@ def upload(files: list[str] | None) -> str:
         except Exception as error:  # noqa: BLE001 - report per file, keep going with the rest
             lines.append(f"{Path(file).name}: failed ({error})")
     return "\n".join(f"- {line}" for line in lines)
+
+
+def upload_datasets(files: list[str] | None) -> tuple[str, str]:
+    if not files:
+        return gr.skip(), gr.skip()
+    lines = []
+    for file in files:
+        try:
+            lines += [result.describe() for result in datasets.upload(Path(file))]
+        except Exception as error:  # noqa: BLE001 - report per file, keep going with the rest
+            lines.append(f"{Path(file).name}: failed ({error})")
+    return "\n".join(f"- {line}" for line in lines), dataset_list()
+
+
+def dataset_list() -> str:
+    found = datasets.list_datasets()
+    if not found:
+        return "_No Datasets yet._"
+    return "\n".join(f"- **{d.name}** ({d.row_count} rows): {', '.join(d.columns)}" for d in found)
 
 
 def todays_usage() -> str:
@@ -90,6 +109,12 @@ def build() -> gr.Blocks:
                 file_count="multiple", file_types=[".pdf", ".md", ".txt"], label="Upload"
             )
             upload_status = gr.Markdown()
+            gr.Markdown("### Datasets")
+            dataset_uploader = gr.File(
+                file_count="multiple", file_types=[".csv", ".xlsx"], label="Upload data"
+            )
+            dataset_status = gr.Markdown()
+            datasets_shown = gr.Markdown(dataset_list)
             usage_status = gr.Markdown()
             gr.Markdown("### Calendar and email")
             google = gr.Button()
@@ -104,6 +129,9 @@ def build() -> gr.Blocks:
         thread_picker.input(open_thread, thread_picker, [chatbot, thread_id])
         new_button.click(new_thread, None, [chatbot, thread_id, thread_picker])
         uploader.upload(upload, uploader, upload_status).then(todays_usage, None, usage_status)
+        dataset_uploader.upload(
+            upload_datasets, dataset_uploader, [dataset_status, datasets_shown]
+        )
         # Refreshed whenever Perry finishes an answer, and on page load.
         chatbot.change(todays_usage, None, usage_status)
         demo.load(todays_usage, None, usage_status)

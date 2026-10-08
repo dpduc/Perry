@@ -9,7 +9,7 @@ from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.errors import GraphRecursionError
 
 from perry import db, models, usage, workspace
-from perry.agents import knowledge, task
+from perry.agents import analysis, knowledge, task
 
 # Each step is one Supervisor decision (call an Agent, or answer).
 MAX_STEPS_PER_TURN = 6
@@ -21,13 +21,16 @@ Agents available as tools:
 - ask_knowledge_agent: anything that could be answered from the user's own Documents \
 (notes, reports, PDFs they uploaded).
 - ask_task_agent: the user's calendar and email (what's on, what someone wrote).
+- ask_analysis_agent: questions about the user's Datasets (CSV or spreadsheet data), \
+such as totals, averages, counts or comparisons.
 
 Rules:
 - If a question might be answered by the user's Documents, ask the Knowledge Agent \
 rather than answering from general knowledge.
 - Keep every citation in square brackets exactly as the Agent gave it.
 - If an Agent reports it couldn't find something, tell the user so. Never invent results.
-- Small talk and questions about yourself need no Agent."""
+- Small talk and questions about yourself need no Agent.
+- When the Analysis Agent shows the SQL it used, include that SQL unchanged in your answer."""
 
 
 @tool
@@ -44,6 +47,13 @@ def ask_task_agent(request: str) -> str:
     return task.ask(request)
 
 
+@tool
+def ask_analysis_agent(question: str) -> str:
+    """Ask the Analysis Agent a self-contained question about the user's Datasets.
+    Returns the findings and the SQL that produced them."""
+    return analysis.ask(question)
+
+
 @cache
 def _checkpointer() -> PostgresSaver:
     checkpointer = PostgresSaver(db.pool())
@@ -58,6 +68,7 @@ def supervisor():
         tools=[
             ask_knowledge_agent,
             ask_task_agent,
+            ask_analysis_agent,
         ],
         system_prompt=SYSTEM_PROMPT,
         checkpointer=_checkpointer(),
