@@ -5,7 +5,9 @@ import pytest
 
 # Tests use their own database so they can never touch real Documents.
 ADMIN_URL = "postgresql://perry:perry@127.0.0.1:5433/perry"
-TEST_URL = "postgresql://perry:perry@127.0.0.1:5433/perry_test"
+# PERRY_TEST_DB lets parallel checkouts each use their own database.
+TEST_DB = os.environ.get("PERRY_TEST_DB", "perry_test")
+TEST_URL = f"postgresql://perry:perry@127.0.0.1:5433/{TEST_DB}"
 os.environ["DATABASE_URL"] = TEST_URL
 # Set before perry loads .env (which never overrides), so tests never trace to LangSmith.
 os.environ["LANGCHAIN_TRACING_V2"] = "false"
@@ -19,10 +21,10 @@ def database():
     try:
         with psycopg.connect(ADMIN_URL, autocommit=True, connect_timeout=3) as conn:
             exists = conn.execute(
-                "SELECT 1 FROM pg_database WHERE datname = 'perry_test'"
+                "SELECT 1 FROM pg_database WHERE datname = %s", (TEST_DB,)
             ).fetchone()
             if not exists:
-                conn.execute("CREATE DATABASE perry_test")
+                conn.execute(f'CREATE DATABASE "{TEST_DB}"')
     except psycopg.OperationalError:
         pytest.skip("Postgres not running: start it with `docker compose up -d`")
 
