@@ -32,6 +32,7 @@ def database():
     db.init_schema()
     with db.pool().connection() as conn:
         conn.execute("TRUNCATE documents, chunks, threads RESTART IDENTITY CASCADE")
+        conn.execute("TRUNCATE usage_ledger")
     return db
 
 

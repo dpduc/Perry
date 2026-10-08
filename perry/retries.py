@@ -5,7 +5,8 @@ Knowledge Agent). When it fails for a reason that may pass (rate limit, timeout,
 provider error, see `models.is_transient`), it is tried once more after a short
 backoff. If that fails too, the step's result becomes a failure report, so the
 Turn goes on and the answer can say what didn't work instead of making it up.
-Other errors (bugs) are not retried and end the Turn as before.
+Other errors are not retried and end the Turn as before: bugs, and deliberate
+stops such as `usage.TurnTokenCeilingReached`.
 
 Excluding a tool from retries
 -----------------------------

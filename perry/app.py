@@ -4,7 +4,7 @@ from pathlib import Path
 
 import gradio as gr
 
-from perry import db, threads
+from perry import db, threads, usage
 from perry.ingest import ingest_file
 from perry.supervisor import run_turn, thread_history
 
@@ -47,6 +47,11 @@ def upload(files: list[str] | None) -> str:
     return "\n".join(f"- {line}" for line in lines)
 
 
+def todays_usage() -> str:
+    today = usage.today()
+    return f"Today: {today.tokens:,} tokens · ${today.cost_usd:.4f}"
+
+
 def build() -> gr.Blocks:
     with gr.Blocks(title="Perry") as demo:
         thread_id = gr.State(None)
@@ -63,6 +68,7 @@ def build() -> gr.Blocks:
                 file_count="multiple", file_types=[".pdf", ".md", ".txt"], label="Upload"
             )
             upload_status = gr.Markdown()
+            usage_status = gr.Markdown()
 
         chatbot = gr.Chatbot(height="75vh", label="Perry")
         box = gr.Textbox(placeholder="Ask Perry…", show_label=False, submit_btn=True)
@@ -72,7 +78,10 @@ def build() -> gr.Blocks:
         )
         thread_picker.input(open_thread, thread_picker, [chatbot, thread_id])
         new_button.click(new_thread, None, [chatbot, thread_id, thread_picker])
-        uploader.upload(upload, uploader, upload_status)
+        uploader.upload(upload, uploader, upload_status).then(todays_usage, None, usage_status)
+        # Refreshed whenever Perry finishes an answer, and on page load.
+        chatbot.change(todays_usage, None, usage_status)
+        demo.load(todays_usage, None, usage_status)
     return demo
 
 

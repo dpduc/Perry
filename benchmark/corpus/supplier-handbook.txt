@@ -1,0 +1,39 @@
+Halden Robotics Supplier Handbook (edition 2025)
+
+1. Supplier tiers
+
+Halden classifies suppliers into two tiers. Tier 1 suppliers provide components without which a product cannot ship. Tier 2 suppliers provide components that can be replaced at short notice, and suppliers that are still being qualified.
+
+Tier 1 suppliers
+
+Nordvik Optics, based in Tampere, Finland, supplies the lidar sensors used in every Kestrel pallet mover. Account contact: Henrik Saari, key account manager.
+
+Brask Motors, based in Aarhus, Denmark, supplies the drive motors for Kestrel and the joint motors for Wren. Account contact: Sofie Brask.
+
+Tier 1 suppliers are reviewed in person once a year by Halden's procurement and engineering teams.
+=== page break ===
+Tier 2 suppliers
+
+Ferrell Sensing, based in Austin, Texas, United States, supplies lidar sensors. Ferrell is under qualification as a second lidar source for Kestrel and is listed as Tier 2 until qualification is complete.
+
+Lumen Cells, based in Wroclaw, Poland, supplies battery packs for Kestrel and Wren.
+
+2. Payment terms
+
+Tier 1 suppliers are paid net 45 days from the invoice date. Tier 2 suppliers are paid net 60 days from the invoice date. Early payment discounts may be agreed case by case with the finance team.
+
+3. Ordering
+
+All purchase orders are issued from Halden's ERP system. Orders placed by phone or email are not valid until confirmed by a purchase order number.
+=== page break ===
+4. Quality
+
+Incoming inspection. Halden inspects a sample of every incoming delivery: 5% of units from Tier 1 suppliers and 10% of units from Tier 2 suppliers. A failed sample leads to inspection of the full delivery.
+
+Supplier scorecard. Each supplier receives a quarterly scorecard covering on-time delivery, quality defects and responsiveness. Two consecutive red scorecards trigger a supplier improvement plan.
+
+Firmware and design changes. Suppliers must notify Halden in writing before changing the firmware or design of any component they supply.
+
+5. Escalation
+
+Questions about orders go to the buyer named on the purchase order. Quality problems and disputes are escalated to the Head of Procurement, Leila Okafor, who can be reached at the Gothenburg headquarters.

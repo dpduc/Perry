@@ -33,6 +33,14 @@ One request from you and everything Perry does to answer it, possibly involving 
 A resumable conversation made of Turns.
 _Avoid_: Session, chat, conversation history
 
+**Usage Ledger**:
+The record of every model call (chat, embeddings, and later speech and vision) with its Thread, Turn, kind, token counts and cost, priced from the price table in config.
+_Avoid_: Billing log, token log
+
+**Token Ceiling**:
+The most tokens one Turn may use. A Turn that reaches it stops and reports what it found so far.
+_Avoid_: Token limit (ambiguous with the model's context window), budget
+
 ### Knowledge
 
 **Document**:

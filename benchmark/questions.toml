@@ -1,0 +1,192 @@
+# Benchmark question set over the Documents in benchmark/documents/.
+#
+# type:          lookup | multi_hop | thematic | entity
+# facts:         each entry is one expected fact; a list gives acceptable phrasings
+#                (matched case-insensitively, thousands separators ignored)
+# pages:         source pages the answer must cite
+# related_pages: pages that are also correct to cite, but not required
+
+# --- Lookup: one fact on one page ------------------------------------------------
+
+[[question]]
+id = "L1"
+type = "lookup"
+question = "What was Halden Robotics' total revenue in 2025?"
+facts = ["84.2"]
+pages = ["halden-annual-report-2025.pdf#page=1"]
+
+[[question]]
+id = "L2"
+type = "lookup"
+question = "Where is Halden's second factory and when did it open?"
+facts = ["Brno", "June"]
+pages = ["halden-annual-report-2025.pdf#page=3"]
+related_pages = ["halden-newsletter-autumn-2025.pdf#page=1", "board-minutes-2025.pdf#page=1"]
+
+[[question]]
+id = "L3"
+type = "lookup"
+question = "What are the payment terms for Tier 2 suppliers?"
+facts = [["net 60", "60 days"]]
+pages = ["supplier-handbook.pdf#page=2"]
+
+[[question]]
+id = "L4"
+type = "lookup"
+question = "How much did Halden pay to acquire Tessel AI?"
+facts = ["9.5"]
+pages = ["board-minutes-2025.pdf#page=3"]
+
+[[question]]
+id = "L5"
+type = "lookup"
+question = "What was overall engagement in the latest employee survey?"
+facts = ["81%"]
+pages = ["halden-newsletter-autumn-2025.pdf#page=2"]
+
+[[question]]
+id = "L6"
+type = "lookup"
+question = "Who is Halden's Head of Procurement?"
+facts = ["Leila Okafor"]
+pages = ["supplier-handbook.pdf#page=3"]
+
+# --- Multi-hop: the answer joins facts from two or more Documents -----------------
+
+[[question]]
+id = "M1"
+type = "multi_hop"
+question = "In which city is the supplier whose firmware defect delayed the Kestrel K3 launch based?"
+facts = ["Nordvik Optics", "Tampere"]
+pages = ["kestrel-k3-postmortem.pdf#page=2", "supplier-handbook.pdf#page=1"]
+related_pages = ["halden-annual-report-2025.pdf#page=4", "kestrel-k3-postmortem.pdf#page=1"]
+
+[[question]]
+id = "M2"
+type = "multi_hop"
+question = "What position does the person who led the Kestrel K3 project hold now, and since when?"
+facts = ["Anja Petrov", ["Vice President of Engineering", "VP of Engineering", "VP Engineering"], ["1 October 2025", "October 1, 2025", "October 2025"]]
+pages = ["kestrel-k3-postmortem.pdf#page=1", "board-minutes-2025.pdf#page=2"]
+related_pages = ["halden-newsletter-autumn-2025.pdf#page=1"]
+
+[[question]]
+id = "M3"
+type = "multi_hop"
+question = "How much did the board approve for the factory that built the 500th Wren arm?"
+facts = ["Brno", "22 million"]
+pages = ["halden-newsletter-autumn-2025.pdf#page=1", "board-minutes-2025.pdf#page=1"]
+related_pages = ["halden-annual-report-2025.pdf#page=3"]
+
+[[question]]
+id = "M4"
+type = "multi_hop"
+question = "Who is the account contact at the single supplier of Kestrel's lidar sensors?"
+facts = ["Henrik Saari"]
+pages = ["halden-annual-report-2025.pdf#page=4", "supplier-handbook.pdf#page=1"]
+related_pages = ["kestrel-k3-postmortem.pdf#page=2"]
+
+[[question]]
+id = "M5"
+type = "multi_hop"
+question = "Which product line will the company acquired in December 2025 strengthen, and how much revenue did that product line make in 2025?"
+facts = ["Osprey", "15.7"]
+pages = ["board-minutes-2025.pdf#page=3", "halden-annual-report-2025.pdf#page=2"]
+related_pages = ["halden-newsletter-autumn-2025.pdf#page=2"]
+
+[[question]]
+id = "M6"
+type = "multi_hop"
+question = "Where is the second lidar supplier being qualified after the K3 delay based, and what payment terms does it get?"
+facts = ["Ferrell Sensing", "Austin", ["net 60", "60 days"]]
+pages = ["kestrel-k3-postmortem.pdf#page=3", "supplier-handbook.pdf#page=2"]
+
+# --- Thematic: a summary drawn from several places --------------------------------
+
+[[question]]
+id = "T1"
+type = "thematic"
+question = "What are Halden's main supply-chain risks and how is the company responding to them?"
+facts = ["Nordvik Optics", ["dual-sourc", "dual sourc", "second source", "second lidar"], "Ferrell Sensing"]
+pages = ["halden-annual-report-2025.pdf#page=4", "kestrel-k3-postmortem.pdf#page=3", "board-minutes-2025.pdf#page=2"]
+related_pages = ["kestrel-k3-postmortem.pdf#page=2", "supplier-handbook.pdf#page=1", "supplier-handbook.pdf#page=2", "supplier-handbook.pdf#page=3"]
+
+[[question]]
+id = "T2"
+type = "thematic"
+question = "How did Halden expand its business and capabilities during 2025?"
+facts = ["Brno", "Tessel", ["18%", "84.2"]]
+pages = ["halden-annual-report-2025.pdf#page=1", "halden-annual-report-2025.pdf#page=3", "board-minutes-2025.pdf#page=3"]
+related_pages = ["board-minutes-2025.pdf#page=1", "halden-annual-report-2025.pdf#page=2", "halden-newsletter-autumn-2025.pdf#page=1", "halden-newsletter-autumn-2025.pdf#page=2"]
+
+[[question]]
+id = "T3"
+type = "thematic"
+question = "What has Halden learned from its problems with robots in cold storage, and what changed as a result?"
+facts = [["condensation", "minus 10", "below -10"], "cold-chamber test", ["simulator", "dual-source", "second lidar"]]
+pages = ["kestrel-k3-postmortem.pdf#page=2", "kestrel-k3-postmortem.pdf#page=3"]
+related_pages = ["kestrel-k3-postmortem.pdf#page=1", "halden-newsletter-autumn-2025.pdf#page=1", "halden-newsletter-autumn-2025.pdf#page=2", "halden-annual-report-2025.pdf#page=4"]
+
+[[question]]
+id = "T4"
+type = "thematic"
+question = "How does Halden control the quality of components it buys from suppliers?"
+facts = [["5%", "10%"], "scorecard", ["notify", "firmware"]]
+pages = ["supplier-handbook.pdf#page=3"]
+related_pages = ["kestrel-k3-postmortem.pdf#page=3", "supplier-handbook.pdf#page=1"]
+
+[[question]]
+id = "T5"
+type = "thematic"
+question = "What targets has Halden set for 2026 and beyond?"
+facts = [["95 to 100", "95-100", "95–100"], "2027", "end of 2026"]
+pages = ["halden-annual-report-2025.pdf#page=4", "board-minutes-2025.pdf#page=2", "board-minutes-2025.pdf#page=3"]
+related_pages = ["kestrel-k3-postmortem.pdf#page=3"]
+
+# --- Entity-centric: everything about one person, company or thing ---------------
+
+[[question]]
+id = "E1"
+type = "entity"
+question = "Who is Anja Petrov and what has she worked on at Halden?"
+facts = ["Kestrel K3", ["Vice President of Engineering", "VP of Engineering", "VP Engineering"], ["2019", "firmware engineer"]]
+pages = ["kestrel-k3-postmortem.pdf#page=1", "board-minutes-2025.pdf#page=2"]
+related_pages = ["halden-newsletter-autumn-2025.pdf#page=1", "kestrel-k3-postmortem.pdf#page=3"]
+
+[[question]]
+id = "E2"
+type = "entity"
+question = "What do the Documents say about Nordvik Optics?"
+facts = ["lidar", "Tampere", ["firmware", "2.4"], "Henrik Saari"]
+pages = ["supplier-handbook.pdf#page=1", "kestrel-k3-postmortem.pdf#page=2"]
+related_pages = ["halden-annual-report-2025.pdf#page=4", "kestrel-k3-postmortem.pdf#page=3"]
+
+[[question]]
+id = "E3"
+type = "entity"
+question = "What is Tessel AI and what is its relationship to Halden?"
+facts = ["Tallinn", "9.5", ["route planning", "route-planning", "route planner"], "23 employees", "Kadri Tamm"]
+pages = ["board-minutes-2025.pdf#page=3", "halden-newsletter-autumn-2025.pdf#page=2"]
+
+[[question]]
+id = "E4"
+type = "entity"
+question = "Tell me about the Brno factory."
+facts = ["June", "1200 units", "22 million", "Pavel Dvorak", "500th"]
+pages = ["halden-annual-report-2025.pdf#page=3", "board-minutes-2025.pdf#page=1", "halden-newsletter-autumn-2025.pdf#page=1"]
+related_pages = ["board-minutes-2025.pdf#page=2", "board-minutes-2025.pdf#page=3"]
+
+[[question]]
+id = "E5"
+type = "entity"
+question = "What is Osprey and how is it doing?"
+facts = ["fleet software", "15.7", "46%"]
+pages = ["halden-annual-report-2025.pdf#page=1", "halden-annual-report-2025.pdf#page=2"]
+related_pages = ["board-minutes-2025.pdf#page=3", "halden-newsletter-autumn-2025.pdf#page=2"]
+
+[[question]]
+id = "E6"
+type = "entity"
+question = "Who is Ferrell Sensing?"
+facts = ["lidar", "Austin", ["Q2 2026", "qualif"]]
+pages = ["supplier-handbook.pdf#page=2"]
+related_pages = ["kestrel-k3-postmortem.pdf#page=3"]

@@ -1,5 +1,6 @@
 """Tools marked `never_retry` (e.g. Write Actions) run at most once per call."""
 
+import pytest
 from fakes import ScriptedChatModel, call
 from langchain.agents import create_agent
 from langchain_core.tools import tool
@@ -57,6 +58,22 @@ def test_never_retry_works_as_a_decorator_on_a_tool():
         return "deleted"
 
     assert delete_event.invoke({"event_id": "e1"}) == "deleted"
+
+
+def test_reaching_the_turn_token_ceiling_stops_the_turn_instead_of_being_retried():
+    from perry import usage
+
+    runs = []
+
+    def run() -> str:
+        runs.append(1)
+        raise usage.TurnTokenCeilingReached(1000)
+
+    lookup = tool("lookup", run, description="Does a thing.")
+
+    with pytest.raises(usage.TurnTokenCeilingReached):
+        ask(agent_with(lookup))
+    assert len(runs) == 1
 
 
 def test_only_transient_errors_count_as_failures_worth_retrying():
