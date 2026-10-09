@@ -36,8 +36,9 @@ Ask = Callable[[str, str], Answer]  # (setup, question) -> Answer
 # as its one tool) is exactly hybrid search forced, so it shares that setup and its cost.
 ALWAYS_HYBRID = "hybrid_search"
 _ALIASES = {"always-hybrid": ALWAYS_HYBRID, "always_hybrid": ALWAYS_HYBRID}
-# Ledger kinds that aren't the chat model, left out of a row's "model".
-_NOT_CHAT = ("embedding", "colbert")
+# Ledger kinds that aren't the chat model, left out of a row's "model" ("pick" is semantic
+# picking's embeddings).
+_NOT_CHAT = ("embedding", "colbert", "pick")
 
 
 def picking_modes() -> tuple[str, ...]:

@@ -82,6 +82,20 @@ def test_semantic_picking_runs_the_technique_with_the_nearest_examples(
     assert found_with(reply) == "Found with: Budget search (picked semantically)"
 
 
+def test_semantic_picking_is_recorded_in_the_usage_ledger_as_picking(
+    perry, registry, monkeypatch
+):
+    from perry import usage
+
+    monkeypatch.setenv("PERRY_PICKING_MODE", "semantic")
+
+    ask(perry, "What is the Q3 marketing budget?", "budget_search")
+
+    # The question's embedding (32 characters: 8 tokens), plus any example questions
+    # not embedded yet in this process.
+    assert usage.today("pick").tokens >= 8
+
+
 # Under the fake embeddings this is a little nearer Trail search's examples than Budget
 # search's (by less than the default margin): a close call.
 CLOSE_CALL = "Any notes on marketing and the ridge?"

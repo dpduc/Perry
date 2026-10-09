@@ -65,7 +65,7 @@ def nearness(question: str, candidates: list[Technique]) -> dict[str, float]:
     example question."""
     examples = [example for t in candidates for example in t.examples]
     vectors = dict(zip(examples, _embed_examples(examples), strict=True))
-    asked = models.embed_documents([question])[0]
+    asked = models.embed_documents([question], kind="pick")[0]
     return {
         t.name: max((_cosine(asked, vectors[example]) for example in t.examples), default=-1.0)
         for t in candidates
@@ -81,7 +81,8 @@ def _embed_examples(examples: list[str]) -> list[list[float]]:
     missing = [e for e in dict.fromkeys(examples) if (model, e) not in _example_vectors]
     if missing:
         # Embedded like the question (as documents), so the two are compared like for like.
-        for example, vector in zip(missing, models.embed_documents(missing), strict=True):
+        vectors = models.embed_documents(missing, kind="pick")
+        for example, vector in zip(missing, vectors, strict=True):
             _example_vectors[(model, example)] = vector
     return [_example_vectors[(model, e)] for e in examples]
 

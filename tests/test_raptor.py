@@ -156,3 +156,33 @@ def test_the_upload_estimate_counts_building_the_tree_on_the_local_model_as_free
     # Embedding the nodes' Summaries is paid, and counts toward the Daily Cap.
     assert tree_embedding.kind == "embedding"
     assert tree_embedding.cost_usd > 0
+
+
+def test_the_upload_estimate_counts_rebuilding_the_cross_document_level(
+    summary_model, tmp_path, upload
+):
+    upload("hiking.md", "Trail notes: the ridge path is steep after the waterfall.")
+    files = []
+    for name in ("budget.md", "plan.md"):
+        files.append(tmp_path / "new" / name)
+        files[-1].parent.mkdir(exist_ok=True)
+        files[-1].write_text(f"{name}: the marketing budget for Q3.", encoding="utf-8")
+
+    estimate = estimate_ingestion(files)
+
+    # After the upload there are three trees, whose roots (about 150 tokens each) the
+    # cross-Document level summarises in one node (plus its 100-token prompt), then embeds.
+    *_, level, level_embedding = estimate.background
+    assert (level.kind, level.input_tokens, level.output_tokens) == ("raptor", 550, 150)
+    assert (level_embedding.kind, level_embedding.input_tokens) == ("embedding", 150)
+
+
+def test_the_upload_estimate_counts_summarising_transcribed_pages(
+    summary_model, half_scanned_pdf
+):
+    estimate = estimate_ingestion([half_scanned_pdf])
+
+    summary, _, tree, _ = estimate.background
+    # Page 1's text (12 tokens) plus page 2 as the vision model will read it (800 tokens).
+    assert summary.input_tokens == 200 + 12 + 800  # with the 200-token instructions
+    assert tree.input_tokens == 12 + 800 + 100  # one node, with its 100-token prompt

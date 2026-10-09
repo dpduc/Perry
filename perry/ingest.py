@@ -79,8 +79,9 @@ class IngestionEstimate:
 
     @property
     def tokens(self) -> int:
-        """Tokens the upload itself uses."""
-        return sum(call.tokens for call in self.calls)
+        """Tokens the upload itself uses. ColBERT's are left out: it encodes the same
+        text the embedding call reads, locally, so counting both would show it twice."""
+        return sum(call.tokens for call in self.calls if call.kind != "colbert")
 
     @property
     def cost_usd(self) -> float:
@@ -128,20 +129,54 @@ def estimate_file(path: Path) -> list[EstimatedCall] | None:
 def estimate_background(path: Path) -> list[EstimatedCall]:
     """The model calls made in the background after ingesting `path`: its Summary on
     the local model, then embedding the Summary; its RAPTOR tree's node Summaries on the
-    local model, then embedding them."""
+    local model, then embedding them. Pages without text count as the vision model will
+    read them at upload. (The cross-Document level is `estimate_cross_document`'s.)"""
     if not models.summaries_supported():
         return []
-    chunks = [chunk.text for chunk in parse(path).chunks]
-    text = summaries.input_text(chunks)
-    tree_in, tree_out, _ = raptor.estimate([models.estimate_tokens([c]) for c in chunks])
+    parsed = parse(path)
+    chunks = [chunk.text for chunk in parsed.chunks]
+    transcribed = (
+        [models.PAGE_TRANSCRIPTION_OUTPUT_TOKENS] * len(parsed.pages_without_text)
+        if models.vision_supported()
+        else []
+    )
+    # The Summary reads at most the start of the Document (summaries.INPUT_CHARS).
+    summary_in = min(
+        models.estimate_tokens([summaries.input_text(chunks)]) + sum(transcribed),
+        models.estimate_tokens(["-" * summaries.INPUT_CHARS]),
+    )
+    chunk_tokens = [models.estimate_tokens([c]) for c in chunks] + transcribed
     return [
         EstimatedCall(
             "summary",
             models.summary_model_name(),
-            summaries.PROMPT_TOKENS + models.estimate_tokens([text]),
+            summaries.PROMPT_TOKENS + summary_in,
             summaries.OUTPUT_TOKENS,
         ),
         EstimatedCall("embedding", models.embedding_model(), summaries.OUTPUT_TOKENS),
+        *_tree_calls(chunk_tokens),
+    ]
+
+
+def estimate_cross_document(new_names: set[str]) -> list[EstimatedCall]:
+    """The model calls rebuilding RAPTOR's cross-Document level takes once Documents
+    called `new_names` are uploaded: one root (about one node Summary) per Document's
+    tree, clustered and summarised like a tree's Chunks, then embedded."""
+    if not new_names or not models.summaries_supported():
+        return []
+    with db.pool().connection() as conn:
+        names = {row["name"] for row in conn.execute("SELECT name FROM documents")}
+    trees = len(names | new_names)
+    if trees < 2:  # a single tree needs no level above it
+        return []
+    return _tree_calls([raptor.OUTPUT_TOKENS] * trees)
+
+
+def _tree_calls(leaf_tokens: list[int]) -> list[EstimatedCall]:
+    """Building a RAPTOR tree over leaves of these sizes on the local model, then
+    embedding its nodes' Summaries."""
+    tree_in, tree_out, _ = raptor.estimate(leaf_tokens)
+    return [
         EstimatedCall("raptor", models.summary_model_name(), tree_in, tree_out),
         EstimatedCall("embedding", models.embedding_model(), tree_out),
     ]
@@ -152,17 +187,20 @@ def estimate_ingestion(paths: list[Path]) -> IngestionEstimate:
     calls: list[EstimatedCall] = []
     background: list[EstimatedCall] = []
     unchanged = 0
+    new_names: set[str] = set()
     for path in paths:
         try:
             file_calls = estimate_file(path)
             if file_calls is not None:
                 background.extend(estimate_background(path))
+                new_names.add(path.name)
         except Exception:  # noqa: BLE001 - it will fail at ingestion too, before any model call
             file_calls = []
         if file_calls is None:
             unchanged += 1
         else:
             calls.extend(file_calls)
+    background.extend(estimate_cross_document(new_names))
     return IngestionEstimate(len(paths), unchanged, tuple(calls), tuple(background))
 
 

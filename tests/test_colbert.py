@@ -75,6 +75,8 @@ def test_colbert_encoding_is_estimated_and_recorded_in_the_usage_ledger(
         ("colbert", "fake-colbert", 12),
     ]
     assert estimate.cost_usd == pytest.approx(0.012)
+    # ColBERT encodes the same text locally: shown once, not twice.
+    assert estimate.describe() == "1 file: about 12 tokens, $0.0120."
     assert usage.today("colbert").tokens == 12
     assert usage.today().cost_usd == pytest.approx(estimate.cost_usd)
 
@@ -110,6 +112,48 @@ def test_a_failed_index_write_leaves_the_document_as_it_was_in_both(documents, m
 
     assert colbert("Kestrel launch")[0].text == "The Kestrel launch is in March."
     assert hybrid("Kestrel launch")[0].text == "The Kestrel launch is in March."
+
+
+def test_an_index_swap_that_fails_after_the_commit_is_rebuilt_at_once(documents, monkeypatch):
+    from perry import colbert as colbert_index
+
+    documents("plan.md", "The Kestrel launch is in March.")
+    documents("hiking.md", "Trail notes: the ridge path is steep after the waterfall.")
+    swap = colbert_index._swap
+    failures = [PermissionError(32, "The file is in use by another process")]
+
+    def swap_once_locked():
+        if failures:
+            raise failures.pop()
+        swap()
+
+    monkeypatch.setattr(colbert_index, "_swap", swap_once_locked)
+
+    documents("plan.md", "The Kestrel launch moved to June.")  # Postgres has committed
+
+    assert not failures  # the swap did fail
+    assert colbert("Kestrel launch")[0].text == "The Kestrel launch moved to June."
+    assert hybrid("Kestrel launch")[0].text == "The Kestrel launch moved to June."
+
+
+def test_an_index_swap_that_keeps_failing_is_reported_and_repaired_at_start(
+    documents, monkeypatch
+):
+    from perry import colbert as colbert_index
+
+    documents("plan.md", "The Kestrel launch is in March.")
+    documents("hiking.md", "Trail notes: the ridge path is steep after the waterfall.")
+
+    def locked():
+        raise PermissionError(32, "The file is in use by another process")
+
+    with monkeypatch.context() as patch, pytest.raises(PermissionError):
+        patch.setattr(colbert_index, "_swap", locked)
+        documents("plan.md", "The Kestrel launch moved to June.")
+
+    colbert_index.ensure_in_step()  # what the next start does
+
+    assert colbert("Kestrel launch")[0].text == "The Kestrel launch moved to June."
 
 
 def test_documents_stored_without_colbert_are_encoded_and_indexed_at_start(documents, tmp_path):

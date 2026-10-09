@@ -365,8 +365,10 @@ def embedding_model() -> str:
     return _provider().embedding_model
 
 
-def embed_documents(texts: list[str]) -> list[list[float]]:
-    _record_embedding(texts)
+def embed_documents(texts: list[str], kind: str = "embedding") -> list[list[float]]:
+    """Each text's embedding, as a Document's. `kind` is what the call is for in the
+    usage ledger, e.g. "pick" when semantic picking embeds a question."""
+    _record_embedding(texts, kind)
     return _provider().embed_documents(texts)
 
 
@@ -482,11 +484,11 @@ def estimate_tokens(texts: list[str]) -> int:
     return sum(math.ceil(len(text) / 4) for text in texts)
 
 
-def _record_embedding(texts: list[str]) -> None:
+def _record_embedding(texts: list[str], kind: str = "embedding") -> None:
     from perry import usage
 
     usage.check_turn_ceiling()
-    usage.record("embedding", embedding_model(), estimate_tokens(texts))
+    usage.record(kind, embedding_model(), estimate_tokens(texts))
 
 
 def _model_name(name: str) -> str:

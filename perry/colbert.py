@@ -85,7 +85,10 @@ class Update:
 def update() -> Iterator[Update]:
     """Wrap a Postgres transaction that changes Chunks, and `stage()` the new index inside
     it. Once the block (and so the commit) succeeds, the staged index replaces the live
-    one; if anything fails, it is thrown away and the live index is untouched."""
+    one; if anything fails, it is thrown away and the live index is untouched. If the
+    swap itself fails (Postgres has committed by then), the index is rebuilt from Postgres
+    at once; only if that fails too does the error reach the caller, and the next start
+    repairs the index (`ensure_in_step`)."""
     with _lock:
         change = Update()
         try:
@@ -94,7 +97,18 @@ def update() -> Iterator[Update]:
             shutil.rmtree(_staging(), ignore_errors=True)
             raise
         if change.staged:
-            _swap()
+            try:
+                _swap()
+            except Exception:
+                log.warning("Couldn't swap in the new ColBERT index; rebuilding it", exc_info=True)
+                _rebuild()
+
+
+def _rebuild() -> None:
+    """Build the index of every Chunk in Postgres afresh and swap it in."""
+    with db.pool().connection() as conn:
+        Update().stage(conn, [])
+    _swap()
 
 
 def search(question: str, limit: int = 6) -> list[SearchHit]:
