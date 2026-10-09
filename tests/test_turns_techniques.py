@@ -1,6 +1,7 @@
 """Retrieval Techniques seen through Turns: which technique found the answer, the
 "Found with" line, and the per-request override that forces one."""
 
+import pytest
 from fakes import call, last_message
 
 
@@ -64,3 +65,32 @@ def test_the_forced_technique_applies_only_to_the_turn_it_came_with(perry):
     reply = perry.send("And the Q3 marketing budget again?")
 
     assert reply.splitlines()[-1] == "Found with: Hybrid search (picked logically)"
+
+
+@pytest.mark.parametrize(
+    ("technique", "label", "model_reply"),
+    [
+        ("step_back", "Step-back", "What drives marketing budgets?"),
+        ("hyde", "HyDE", "The marketing budget for Q3 is 10,000 dollars."),
+    ],
+)
+def test_a_forced_query_translation_technique_answers_with_citations(
+    perry, technique, label, model_reply
+):
+    perry.add_document("budget.md", "The marketing budget for Q3 is 40,000 dollars.")
+    perry.add_document("hiking.md", "Trail notes: the ridge path is steep after the waterfall.")
+    perry.script(
+        call("ask_knowledge_agent", question="What is the Q3 marketing budget?"),  # Supervisor
+        call(technique, question="Q3 marketing budget"),  # Knowledge Agent
+        model_reply,  # the technique's own model call (broader question / hypothetical)
+        last_message,  # Knowledge Agent reports the passages it found
+        last_message,  # Supervisor passes the findings on
+    )
+
+    reply = perry.send("How big is my Q3 marketing budget?", technique=technique)
+
+    assert reply.startswith("The marketing budget for Q3 is 40,000 dollars.")
+    assert model_reply not in reply
+    *_, citations, found_with = reply.splitlines()
+    assert citations.startswith("Citations: [budget.md]")
+    assert found_with == f"Found with: {label} (forced)"
