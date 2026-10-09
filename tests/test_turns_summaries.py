@@ -39,3 +39,24 @@ def test_document_summaries_finds_nothing_while_summaries_are_pending(perry):
 
     assert "40,000" not in reply
     assert "No passages found" in reply
+
+
+def test_forced_raptor_answers_with_page_citations_and_names_itself(perry):
+    perry.add_document("budget.md", "The marketing budget for Q3 is 40,000 dollars.")
+    perry.add_document("hiking.md", "Trail notes: the ridge path is steep after the waterfall.")
+    with models.use(fake_provider(perry.model, summary=FakeSummaryModel())):
+        summaries.summarise_pending()  # Summaries, then the RAPTOR trees
+    perry.script(
+        call("ask_knowledge_agent", question="What do my documents say about the marketing budget?"),
+        call("raptor", question="marketing budget overall"),
+        last_message,  # Knowledge Agent reports the passages it found
+        last_message,  # Supervisor passes the findings on
+    )
+
+    reply = perry.send("Overall, what about the marketing budget?", technique="raptor")
+
+    assert reply.startswith("The marketing budget for Q3 is 40,000 dollars.")
+    assert "Summary:" not in reply  # a node's Summary is never shown or cited
+    *_, citations, found_with = reply.splitlines()
+    assert citations.startswith("Citations: [budget.md]")
+    assert found_with == "Found with: RAPTOR (forced)"

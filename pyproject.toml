@@ -18,6 +18,7 @@ dependencies = [
     "psycopg[binary,pool]>=3.3.6",
     "pymupdf>=1.28.2",
     "python-dotenv>=1.2.4",
+    "scikit-learn>=1.9.1",
 ]
 
 [dependency-groups]
