@@ -13,6 +13,7 @@ from perry import (
     ingest,
     models,
     privacy,
+    summaries,
     techniques,
     threads,
     usage,
@@ -227,6 +228,8 @@ def ingest_upload(files: list[str]):
         results = ingest.ingest_files([Path(file) for file in files])
     except ingest.OverBudget as refused:
         return str(refused), gr.update(visible=False)
+    # The Documents are searchable now; Summaries follow without holding up the upload.
+    summaries.start_background()
     return "\n".join(f"- {r.describe()}" for r in results), gr.update(visible=False)
 
 
@@ -251,6 +254,14 @@ def dataset_list() -> str:
     if not found:
         return "_No Datasets yet._"
     return "\n".join(f"- **{d.name}** ({d.row_count} rows): {', '.join(d.columns)}" for d in found)
+
+
+def summarising_status() -> str:
+    """The sidebar's note on Documents still waiting for their Summary; empty if none."""
+    pending = summaries.pending_count()
+    if not pending:
+        return ""
+    return f"Summarising {pending} Document{'' if pending == 1 else 's'}…"
 
 
 def todays_usage() -> str:
@@ -319,6 +330,9 @@ def build(privacy_notice: str = "") -> gr.Blocks:
                 file_count="multiple", file_types=[".pdf", ".md", ".txt"], label="Upload"
             )
             upload_status = gr.Markdown()
+            summarising = gr.Markdown()
+            # Summaries are written in the background, so the count is polled.
+            summarising_timer = gr.Timer(10)
             uploaded = gr.State([])  # files waiting for the user's OK to ingest
             with gr.Row(visible=False) as upload_choice:
                 ingest_button = gr.Button("Ingest", variant="primary", size="sm")
@@ -407,16 +421,22 @@ def build(privacy_notice: str = "") -> gr.Blocks:
         thread_picker.input(open_thread, thread_picker, [chatbot, thread_id, *card_outputs])
         new_button.click(new_thread, None, [chatbot, thread_id, thread_picker, *card_outputs])
         then_refresh_status(
-            uploader.upload(propose_upload, uploader, [uploaded, upload_status, upload_choice])
+            uploader.upload(
+                propose_upload, uploader, [uploaded, upload_status, upload_choice]
+            ).then(summarising_status, None, summarising)
         )
         then_refresh_status(
-            ingest_button.click(ingest_upload, uploaded, [upload_status, upload_choice])
+            ingest_button.click(
+                ingest_upload, uploaded, [upload_status, upload_choice]
+            ).then(summarising_status, None, summarising)
         )
         cancel_button.click(cancel_upload, None, [uploaded, upload_status, upload_choice])
         dataset_uploader.upload(
             upload_datasets, dataset_uploader, [dataset_status, datasets_shown]
         )
         demo.load(sidebar_status, None, status_outputs)
+        demo.load(summarising_status, None, summarising)
+        summarising_timer.tick(summarising_status, None, summarising, show_progress="hidden")
         demo.load(thread_choices, None, thread_picker)
         demo.load(lambda: privacy_notice, None, google_status)
         google.click(connect_google, account_kind, [google, google_status])
@@ -429,5 +449,7 @@ if __name__ == "__main__":
     if notice:
         print(notice)
     db.init_schema()
+    # Retry Summaries that failed (e.g. Ollama wasn't running) and finish pending ones.
+    summaries.resume()
     colbert.ensure_in_step()  # e.g. Documents stored before ColBERT, or after a crash
     build(notice).launch(server_name="127.0.0.1", allowed_paths=[str(charts.directory())])

@@ -26,6 +26,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.rate_limiters import InMemoryRateLimiter
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_google_genai.chat_models import GoogleRateLimitError
+from langchain_ollama import ChatOllama
 
 from perry import images
 
@@ -46,6 +47,13 @@ EMBEDDING_MODEL = os.getenv("PERRY_EMBEDDING_MODEL", "gemini-embedding-001")
 # Text-to-speech: a Gemini model whose name ends in "-tts" answers with audio.
 TTS_MODEL = os.getenv("PERRY_TTS_MODEL", "gemini-2.5-flash-preview-tts")
 TTS_VOICE = os.getenv("PERRY_TTS_VOICE", "Kore")
+# The local model (Ollama) that writes Summaries and extracts Document metadata in the
+# background, so they cost nothing and the Documents never leave this machine.
+SUMMARY_MODEL = os.getenv("PERRY_SUMMARY_MODEL", "qwen3:8b")
+# 127.0.0.1, not localhost: on Windows, localhost tries IPv6 first and stalls.
+OLLAMA_URL = os.getenv("PERRY_OLLAMA_URL", "http://127.0.0.1:11434")
+# Ollama's default context is 4096 tokens and silently cuts longer prompts.
+SUMMARY_CONTEXT_TOKENS = int(os.getenv("PERRY_SUMMARY_CONTEXT_TOKENS", "8192"))
 # The local late-interaction model behind the ColBERT Retrieval Technique (ADR-0002).
 # Changing it re-encodes every Chunk when Perry next starts. Empty turns ColBERT off.
 DEFAULT_COLBERT_MODEL = "answerdotai/answerai-colbert-small-v1"
@@ -116,6 +124,10 @@ class VisionUnavailable(Exception):
     """The current model provider can't read images."""
 
 
+class SummariesUnavailable(Exception):
+    """The current model provider has no local summary model."""
+
+
 @dataclass(frozen=True)
 class Provider:
     """Everything Perry needs from a model API."""
@@ -135,6 +147,10 @@ class Provider:
     # True only when chat (text generation) runs on this machine, so nothing the
     # Agents read leaves it. Embeddings may still be remote: they never see email.
     local_text_generation: bool = False
+    # The local text model that writes Summaries and extracts Document metadata in the
+    # background, if the provider has one, and the name the usage ledger prices it by.
+    summary_model: Callable[[], BaseChatModel] | None = None
+    summary_model_name: str = "unknown"
     # The ColBERT encoder, if there is one. Without it, ingestion leaves the ColBERT
     # index alone and the ColBERT Retrieval Technique finds nothing.
     colbert: ColbertEncoder | None = None
@@ -179,7 +195,21 @@ def _gemini() -> Provider:
         synthesize=lambda text: _gemini_synthesize(tts, text),
         read_image=lambda image, mime_type: _gemini_read_image(chat_model(), image, mime_type),
         vision_model=LLM_MODEL,
+        summary_model=_ollama_summary_model,
+        summary_model_name=SUMMARY_MODEL,
         colbert=LocalColbert(COLBERT_MODEL) if COLBERT_MODEL else None,
+    )
+
+
+@cache
+def _ollama_summary_model() -> ChatOllama:
+    # A stopped Ollama raises httpx.ConnectError on the first call, not here.
+    return ChatOllama(
+        model=SUMMARY_MODEL,
+        base_url=OLLAMA_URL,
+        temperature=0,
+        reasoning=False,  # qwen3's thinking makes a Summary ~18x slower for no gain here
+        num_ctx=SUMMARY_CONTEXT_TOKENS,
     )
 
 
@@ -281,7 +311,32 @@ def chat_model(kind: str = "chat") -> BaseChatModel:
     """The chat model. `kind` is what its calls are for in the usage ledger: "chat" for
     an Agent's own reasoning, or e.g. "rewrite" or "pick" for a Retrieval Technique's
     calls (a call given an image is "vision" whatever the kind)."""
-    model = _provider().chat_model()
+    return _recorded(_provider().chat_model(), kind)
+
+
+def summaries_supported() -> bool:
+    """Whether the current provider has a local summary model."""
+    return _provider().summary_model is not None
+
+
+def summary_model_name() -> str:
+    """The name the usage ledger prices summary calls by."""
+    return _provider().summary_model_name
+
+
+def summary_model(kind: str = "summary") -> BaseChatModel:
+    """The local text model for background work: Summaries, Document metadata and (later)
+    RAPTOR. Slow (minutes per call on a CPU) but free; never use it in a Turn. Its
+    calls are recorded in the usage ledger as `kind`, priced from the price table
+    (zero for a local model)."""
+    build = _provider().summary_model
+    if build is None:
+        raise SummariesUnavailable("This model provider has no local summary model.")
+    return _recorded(build(), kind)
+
+
+def _recorded(model: BaseChatModel, kind: str) -> BaseChatModel:
+    """`model`, with its calls recorded in the usage ledger as `kind`."""
     callbacks = model.callbacks or []
     if not any(isinstance(handler, _UsageRecorder) for handler in callbacks):
         model.callbacks = [*callbacks, _UsageRecorder()]

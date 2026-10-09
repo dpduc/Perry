@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from langchain.agents import create_agent
 from langchain_core.tools import BaseTool, StructuredTool
 
-from perry import models, retries, techniques
+from perry import models, picking, retries, techniques
 from perry.techniques import Technique
 
 SYSTEM_PROMPT = """You are Perry's Knowledge Agent. You answer questions using ONLY \
@@ -29,6 +29,7 @@ contain it. Never fill gaps from general knowledge.
 
 # How a technique was chosen, as the "Found with" line says it.
 PICKED_LOGICALLY = "picked logically"  # the Knowledge Agent's model chose it
+PICKED_SEMANTICALLY = "picked semantically"  # its example questions were nearest
 FORCED = "forced"  # the per-request override named it
 
 
@@ -68,12 +69,20 @@ class Findings:
 
 def find(question: str, forced: str | None = None) -> Findings:
     """Answer `question` from the Documents. `forced` names the one Retrieval Technique
-    to use (the per-request override); by default the Knowledge Agent picks."""
-    offered = [techniques.get(forced)] if forced else list(techniques.TECHNIQUES)
+    to use (the per-request override); by default one is picked in the picking mode in
+    force (see `perry.picking`)."""
+    if forced:
+        offered, how = [techniques.get(forced)], FORCED
+    else:
+        candidates = techniques.available()
+        picked = picking.pick(question, candidates)
+        if picked:
+            offered, how = [picked], PICKED_SEMANTICALLY
+        else:
+            offered, how = candidates, PICKED_LOGICALLY
     agent = knowledge_agent([technique_tool(t) for t in offered])
     result = agent.invoke({"messages": [{"role": "user", "content": question}]})
     used = dict.fromkeys(m.name for m in result["messages"] if m.type == "tool")
-    how = FORCED if forced else PICKED_LOGICALLY
     found_with = tuple(f"{t.label} ({how})" for t in offered if t.name in used)
     return Findings(result["messages"][-1].text, found_with)
 

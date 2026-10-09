@@ -38,6 +38,38 @@ ALTER TABLE chunks ADD COLUMN IF NOT EXISTS colbert bytea;
 CREATE INDEX IF NOT EXISTS chunks_embedding_idx ON chunks USING hnsw (embedding vector_cosine_ops);
 CREATE INDEX IF NOT EXISTS chunks_tsv_idx ON chunks USING gin (tsv);
 
+-- Written in the background after upload (perry.summaries): the summarising status,
+-- and the Document metadata extracted with the Summary.
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS summary_status text NOT NULL DEFAULT 'pending'
+    CHECK (summary_status IN ('pending', 'ready', 'failed'));
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS document_date date;
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS topic text;
+CREATE INDEX IF NOT EXISTS documents_summary_status_idx ON documents (summary_status);
+
+-- Summaries, used only to find Chunks: never cited. One per Document (kind 'document'),
+-- or one per RAPTOR node (kind 'raptor'; level 1 and up; document_id NULL for the
+-- cross-Document level). summary_chunks links each to every leaf Chunk beneath it, so a
+-- match returns those Chunks with their page Citations.
+CREATE TABLE IF NOT EXISTS summaries (
+    id          bigserial PRIMARY KEY,
+    document_id bigint REFERENCES documents(id) ON DELETE CASCADE,
+    kind        text NOT NULL,
+    level       int NOT NULL DEFAULT 1,
+    text        text NOT NULL,
+    embedding   vector({EMBEDDING_DIMENSIONS}) NOT NULL,
+    created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS summaries_document_idx ON summaries (document_id);
+CREATE INDEX IF NOT EXISTS summaries_embedding_idx
+    ON summaries USING hnsw (embedding vector_cosine_ops);
+
+CREATE TABLE IF NOT EXISTS summary_chunks (
+    summary_id bigint NOT NULL REFERENCES summaries(id) ON DELETE CASCADE,
+    chunk_id   bigint NOT NULL REFERENCES chunks(id) ON DELETE CASCADE,
+    PRIMARY KEY (summary_id, chunk_id)
+);
+CREATE INDEX IF NOT EXISTS summary_chunks_chunk_idx ON summary_chunks (chunk_id);
+
 CREATE TABLE IF NOT EXISTS threads (
     id         text PRIMARY KEY,
     title      text NOT NULL,

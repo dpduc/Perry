@@ -14,7 +14,7 @@ from pathlib import Path
 
 from pgvector import Vector
 
-from perry import colbert, db, models, usage
+from perry import colbert, db, models, summaries, usage
 from perry.documents import (
     Chunk,
     ParsedDocument,
@@ -74,14 +74,18 @@ class IngestionEstimate:
     files: int
     unchanged: int
     calls: tuple[EstimatedCall, ...]
+    # Calls made after the upload returns (Summaries on the local model, priced at zero).
+    background: tuple[EstimatedCall, ...] = ()
 
     @property
     def tokens(self) -> int:
+        """Tokens the upload itself uses."""
         return sum(call.tokens for call in self.calls)
 
     @property
     def cost_usd(self) -> float:
-        return sum(call.cost_usd for call in self.calls)
+        """What the upload and the background work after it cost."""
+        return sum(call.cost_usd for call in (*self.calls, *self.background))
 
     def describe(self) -> str:
         files = "1 file" if self.files == 1 else f"{self.files} files"
@@ -121,20 +125,40 @@ def estimate_file(path: Path) -> list[EstimatedCall] | None:
     return calls
 
 
+def estimate_background(path: Path) -> list[EstimatedCall]:
+    """The model calls made in the background after ingesting `path`: its Summary on
+    the local model, then embedding the Summary."""
+    if not models.summaries_supported():
+        return []
+    text = summaries.input_text([chunk.text for chunk in parse(path).chunks])
+    return [
+        EstimatedCall(
+            "summary",
+            models.summary_model_name(),
+            summaries.PROMPT_TOKENS + models.estimate_tokens([text]),
+            summaries.OUTPUT_TOKENS,
+        ),
+        EstimatedCall("embedding", models.embedding_model(), summaries.OUTPUT_TOKENS),
+    ]
+
+
 def estimate_ingestion(paths: list[Path]) -> IngestionEstimate:
     """What `ingest_files(paths)` would cost. Makes no model calls."""
     calls: list[EstimatedCall] = []
+    background: list[EstimatedCall] = []
     unchanged = 0
     for path in paths:
         try:
             file_calls = estimate_file(path)
+            if file_calls is not None:
+                background.extend(estimate_background(path))
         except Exception:  # noqa: BLE001 - it will fail at ingestion too, before any model call
             file_calls = []
         if file_calls is None:
             unchanged += 1
         else:
             calls.extend(file_calls)
-    return IngestionEstimate(len(paths), unchanged, tuple(calls))
+    return IngestionEstimate(len(paths), unchanged, tuple(calls), tuple(background))
 
 
 def _unchanged(path: Path) -> bool:

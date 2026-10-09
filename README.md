@@ -8,7 +8,7 @@ A personal multi-agent assistant that runs on your own machine. You talk to one 
 
 | Agent | What it does for you |
 |---|---|
-| **Knowledge Agent** | Answers questions from the Documents you upload (PDF, Markdown, text) and cites the exact page each claim came from. Picks a Retrieval Technique per question (e.g. hybrid search, pgvector + Postgres full-text; or ColBERT, a local late-interaction model with its own on-disk index, for exact names and rare terms) and says which one it used. Scanned PDF pages with no text are read by the vision model at upload. |
+| **Knowledge Agent** | Answers questions from the Documents you upload (PDF, Markdown, text) and cites the exact page each claim came from. Picks a Retrieval Technique per question (today: hybrid search, pgvector + Postgres full-text; Multi-query and RAG fusion, which rewrite the question into several hybrid searches; Step-back, which also searches a broader version of "why" questions; HyDE, which searches with a hypothetical answer; Document Summaries, written in the background by a local model; ColBERT, a local late-interaction model with its own on-disk index, for exact names and rare terms) and says which one it used. Scanned PDF pages with no text are read by the vision model at upload. |
 | **Analysis Agent** | Answers questions about your Datasets (CSV, or each sheet of an XLSX). It writes read-only SQL and shows you the query it ran. When SQL isn't enough (statistics, forecasts, charts) it writes Python that runs in a locked-down Docker **Sandbox**, and the charts appear in the chat. |
 | **Task Agent** | Reads your Google Calendar and Gmail freely. Anything that changes something or reaches another person (send, reply, create, move or delete an event) waits for you on a **Confirmation card**, where you approve, edit the fields, or reject with a note. |
 
@@ -69,7 +69,7 @@ The repo ships small sample files you can use to try everything: [evals/document
 3. Ask, for example: *What's my Q3 marketing budget?* With the sample files you should get 40,000 dollars, with a Citation to `q3-budget.md`.
 4. Ask something that isn't in your files, such as *What's my Q4 budget?* Perry should say it can't find it rather than guess.
 5. Questions that need two files work too: *How does the offsite compare with the trade fair?*
-6. Each answer ends with its Citations, then a line such as `Found with: Hybrid search (picked logically)` naming the Retrieval Technique that found them. To try a specific technique, pick it in the sidebar's **Retrieval Technique** dropdown (Auto by default); it is used for your next questions, reported as `(forced)`, until you set it back to Auto. Perry still decides on its own whether a question needs your Documents at all.
+6. Each answer ends with its Citations, then a line such as `Found with: Hybrid search (picked logically)` naming the Retrieval Technique that found them and how it was picked: `semantically` when the question was clearly closest to that technique's example questions (no extra model call), `logically` when the model chose from the techniques' descriptions. To try a specific technique, pick it in the sidebar's **Retrieval Technique** dropdown (Auto by default); it is used for your next questions, reported as `(forced)`, until you set it back to Auto. Perry still decides on its own whether a question needs your Documents at all.
 
 ### 2. Replace or update a Document
 
@@ -174,6 +174,9 @@ All optional; add any of these to `.env` to override the default.
 | `PERRY_EMBEDDING_MODEL` | `gemini-embedding-001` | Embedding model (changing it means re-ingesting every Document) |
 | `PERRY_TTS_MODEL` | `gemini-2.5-flash-preview-tts` | Reads voice answers aloud |
 | `PERRY_TTS_VOICE` | `Kore` | Voice for read-aloud answers |
+| `PERRY_SUMMARY_MODEL` | `qwen3:8b` | Local Ollama model that writes Summaries and extracts Document metadata in the background; give it a zero entry in `prices.toml` |
+| `PERRY_OLLAMA_URL` | `http://127.0.0.1:11434` | Where Ollama listens |
+| `PERRY_SUMMARY_CONTEXT_TOKENS` | `8192` | Context window asked of the local model (Ollama's default, 4096, cuts longer prompts) |
 | `PERRY_REQUESTS_PER_SECOND` | `0.0667` | Request pacing (4/min; the free tier allows 5/min) |
 | `DATABASE_URL` | `postgresql://perry:perry@127.0.0.1:5433/perry` | The Postgres Perry uses |
 | `PERRY_RETRY_DELAY_SECONDS` | `2` | Wait before a failed step's one retry |
@@ -181,6 +184,8 @@ All optional; add any of these to `.env` to override the default.
 | `PERRY_DAILY_CAP_USD` | `1.00` | New Turns and ingestion are refused past this until local midnight |
 | `PERRY_COLBERT_MODEL` | `answerdotai/answerai-colbert-small-v1` | Local model for the ColBERT Retrieval Technique (downloaded on first use, runs on the CPU); changing it re-encodes every Chunk at next start; empty turns ColBERT off |
 | `PERRY_SHOW_FOUND_WITH` | `true` | End answers from your Documents with the "Found with" line naming the Retrieval Technique; `false` turns it off |
+| `PERRY_PICKING_MODE` | `cascade` | How the Knowledge Agent picks a Retrieval Technique: `semantic` (nearest example questions), `logical` (the model chooses from the descriptions) or `cascade` (semantic when clearly closest, else logical). The sidebar's forced technique wins over all of them |
+| `PERRY_CASCADE_MARGIN` | `0.05` | How much nearer (cosine similarity) the closest technique's examples must be than the runner-up's for `cascade` to pick semantically; tune on the eval set, never the benchmark |
 | `PERRY_PRICES_FILE` | `prices.toml` | Price table, USD per million tokens per model |
 | `PERRY_ANALYST_PASSWORD` | `perry_analyst` | Password of the read-only `perry_analyst` role |
 | `PERRY_ANALYSIS_TIMEOUT_MS` | `10000` | Statement timeout for the Analysis Agent's SQL |
@@ -197,6 +202,7 @@ All optional; add any of these to `.env` to override the default.
 - **Speed on the free tier:** Gemini Flash allows 5 requests/minute, and Perry paces itself to 4. A Turn makes 3-6 model calls, so expect about 1-2 minutes per answer.
 - **Privacy:** on the free tier, Google may use what you send to improve its products. Don't upload anything confidential.
 - **Scanned PDF pages** (no extractable text) are rendered to images and transcribed by the vision model (the chat model, `PERRY_LLM_MODEL`), then cited by page like any other. The estimate shown before ingesting includes one transcription per such page, and the calls count toward usage. A page whose transcription fails is listed after upload.
+- **Summaries (local model):** after an upload returns, a background job asks the local model (Ollama, `PERRY_SUMMARY_MODEL`, default `qwen3:8b`: `ollama pull qwen3:8b`) for one Summary per Document plus its date and topic, reading the start of the Document (about 2,500 tokens). On a CPU this takes minutes per Document; the sidebar shows "Summarising N Documents…" meanwhile, and the Document Summaries technique skips Documents that aren't ready. If Ollama isn't running, the Document stays searchable, is marked failed, and is retried on the next start. The upload estimate counts the local calls as free (only embedding the Summary is paid). The `python -m perry.ingest` CLI doesn't summarise; the app does it for pending Documents when it next starts.
 - **ColBERT** keeps its own index under `<app-data>\colbert`, beside Postgres (docs/adr/0002). Every upload updates both before it returns, and a failed upload leaves both as they were. Uploads take a little longer while ColBERT encodes the text on the CPU (roughly 7 Chunks a second), and the first one downloads the model (~130 MB). At start, Perry encodes any Chunks stored before ColBERT existed and rebuilds the index if it doesn't match Postgres; deleting the folder is safe.
 - **Changing the embedding model** or its dimension means re-ingesting every Document.
 - **Usage:** every model call is recorded with its tokens and cost (the sidebar shows today's totals). Prices live in `prices.toml`; edit it to match current pricing. A Turn stops at `PERRY_TURN_TOKEN_CEILING` tokens (default 50,000) and reports what it found so far. Embedding tokens are estimated (about 4 characters per token), since the Gemini API doesn't report them. Once today's cost reaches `PERRY_DAILY_CAP_USD` (default $1), new Turns are refused until local midnight; a Turn already running always finishes. Uploads count toward the cap too: they show an estimate and wait for your OK, and are refused up front if they would go over.

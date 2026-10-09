@@ -1,6 +1,7 @@
 """Fake models for tests: a scripted chat model and deterministic embeddings. No network."""
 
 import hashlib
+import json
 import re
 import uuid
 from collections.abc import Callable
@@ -154,6 +155,41 @@ class FakeVision:
         return Transcription(reply, self.model, 300, 50)
 
 
+class FakeSummaryModel(BaseChatModel):
+    """The local summary model: replies with the scripted replies in order (an Exception
+    is raised instead), then with a deterministic default.
+
+    The default reply is the JSON a Summary call asks for: the Summary is "Summary: "
+    plus the text it was given, so a Summary shares its Document's words (and so its
+    fake embedding); no Document date, topic "general". It names its model as the real
+    local one does, so the ledger prices it from the price table.
+    """
+
+    replies: list[Any] = Field(default_factory=list)
+    calls: list[list[BaseMessage]] = Field(default_factory=list)
+    model: str = "qwen3:8b"
+
+    @property
+    def _llm_type(self) -> str:
+        return "fake-summary"
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs) -> ChatResult:
+        self.calls.append(list(messages))
+        if self.replies:
+            reply = self.replies.pop(0)
+            if isinstance(reply, Exception):
+                raise reply
+        else:
+            reply = json.dumps(
+                {"summary": f"Summary: {messages[-1].text}", "document_date": None,
+                 "topic": "general"}
+            )
+        message = AIMessage(
+            reply,
+            response_metadata={"model_name": self.model},
+            usage_metadata={"input_tokens": 100, "output_tokens": 20, "total_tokens": 120},
+        )
+        return ChatResult(generations=[ChatGeneration(message=message)])
 class FakeColbert:
     """A deterministic ColBERT encoder: one fixed unit vector per word, so a Chunk scores
     the number of the question's words it contains. Works with the real on-disk index."""
@@ -184,10 +220,12 @@ def fake_provider(
     speech: bool = True,
     local: bool = False,
     vision: FakeVision | None = None,
+    summary: FakeSummaryModel | None = None,
     colbert: FakeColbert | None = None,
 ) -> Provider:
     """Fake models; `local=True` makes text generation count as local (for privacy checks).
-    Without `colbert`, ingestion leaves the ColBERT index alone (and skips loading torch)."""
+    Only with a `summary` model can the provider write Summaries. Without `colbert`,
+    ingestion leaves the ColBERT index alone (and skips loading torch)."""
     vision = vision or FakeVision()
     return Provider(
         chat_model=lambda: chat,
@@ -199,5 +237,7 @@ def fake_provider(
         read_image=vision,
         vision_model=vision.model,
         local_text_generation=local,
+        summary_model=(lambda: summary) if summary else None,
+        summary_model_name=summary.model if summary else "unknown",
         colbert=colbert,
     )
