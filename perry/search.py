@@ -171,7 +171,7 @@ WITH matched AS (
     SELECT s.id, row_number() OVER (ORDER BY s.embedding <=> %(embedding)s) AS rank
     FROM summaries s
     LEFT JOIN documents d ON d.id = s.document_id
-    WHERE s.kind = %(kind)s AND (s.document_id IS NULL OR d.summary_status = 'ready')
+    WHERE s.kind = %(kind)s AND (s.document_id IS NULL OR d.{status} = 'ready')
     ORDER BY s.embedding <=> %(embedding)s
     LIMIT %(summaries)s
 ),
@@ -180,6 +180,7 @@ beneath AS (
     FROM matched m
     JOIN summary_chunks sc ON sc.summary_id = m.id
     JOIN chunks c ON c.id = sc.chunk_id
+    JOIN documents cd ON cd.id = c.document_id AND cd.{status} = 'ready'
     ORDER BY c.id, m.rank
 ),
 ranked AS (
@@ -195,12 +196,18 @@ LIMIT %(limit)s
 """
 
 
+# The status column that says whether a Document's Summaries of each kind are ready.
+_STATUS = {"document": "summary_status", "raptor": "raptor_status"}
+
+
 def summary_search(
     query: str, limit: int = 6, *, kind: str = "document", embed=models.embed_query
 ) -> list[SearchHit]:
     """The Chunks beneath the Summaries of `kind` that best match `query`: the best
     Chunks under the best-matching Summary first. A Summary is never returned itself,
-    and the Summaries of Documents whose summarising isn't ready are skipped."""
+    and the Summaries of Documents whose summarising isn't ready are skipped (for RAPTOR
+    nodes, whose tree isn't ready; a cross-Document node returns only ready Documents'
+    Chunks)."""
     params = {
         "embedding": Vector(embed(query)),
         "kind": kind,
@@ -209,5 +216,5 @@ def summary_search(
         "limit": limit,
     }
     with db.pool().connection() as conn:
-        rows = conn.execute(SUMMARY_SQL, params).fetchall()
+        rows = conn.execute(SUMMARY_SQL.format(status=_STATUS[kind]), params).fetchall()
     return [SearchHit(r["name"], r["page"], r["text"], float(r["score"])) for r in rows]

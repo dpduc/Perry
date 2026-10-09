@@ -19,6 +19,7 @@ dependencies = [
     "pylate>=1.6.0",
     "pymupdf>=1.28.2",
     "python-dotenv>=1.2.4",
+    "scikit-learn>=1.9.1",
     "torch>=2.11.0",
 ]
 

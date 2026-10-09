@@ -82,10 +82,11 @@ def document(name: str) -> DocumentSummary | None:
 
 
 def pending_count() -> int:
-    """How many Documents are still waiting for their Summary."""
+    """How many Documents are still waiting for their Summary or their RAPTOR tree."""
     with db.pool().connection() as conn:
         row = conn.execute(
-            "SELECT count(*) AS n FROM documents WHERE summary_status = %s", (PENDING,)
+            "SELECT count(*) AS n FROM documents WHERE summary_status = %s OR raptor_status = %s",
+            (PENDING, PENDING),
         ).fetchone()
     return int(row["n"])
 
@@ -101,9 +102,11 @@ def ready_documents() -> set[str]:
 
 
 def summarise_pending() -> int:
-    """Summarise every pending Document, one at a time, and return how many were tried.
-    Each ends `ready` or, if anything fails, `failed`. Slow with a real local model.
-    Without a local summary model, Documents stay pending."""
+    """Summarise every pending Document, one at a time, then build the pending RAPTOR
+    trees (`raptor.build_pending`), and return how many Summaries were tried. Each ends
+    `ready` or, if anything fails, `failed`. Slow with a real local model. Without a
+    local summary model, Documents stay pending."""
+    from perry import raptor  # raptor writes its nodes through this module
     if not models.summaries_supported():
         return 0
     tried = 0
@@ -115,6 +118,7 @@ def summarise_pending() -> int:
         except Exception:
             log.warning("Couldn't summarise %s; will retry on the next start", name, exc_info=True)
             _set_status(document_id, FAILED)
+    raptor.build_pending()
     return tried
 
 
@@ -272,9 +276,9 @@ def resume() -> None:
 
 
 def retry_failed() -> None:
-    """Make the Documents whose summarising failed pending again."""
+    """Make the Documents whose summarising (Summary or RAPTOR tree) failed pending again."""
     with db.pool().connection() as conn:
-        conn.execute(
-            "UPDATE documents SET summary_status = %s WHERE summary_status = %s",
-            (PENDING, FAILED),
-        )
+        for column in ("summary_status", "raptor_status"):
+            conn.execute(
+                f"UPDATE documents SET {column} = %s WHERE {column} = %s", (PENDING, FAILED)
+            )

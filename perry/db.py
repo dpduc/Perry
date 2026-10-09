@@ -45,6 +45,9 @@ ALTER TABLE documents ADD COLUMN IF NOT EXISTS summary_status text NOT NULL DEFA
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS document_date date;
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS topic text;
 CREATE INDEX IF NOT EXISTS documents_summary_status_idx ON documents (summary_status);
+-- The status of the Document's RAPTOR tree (perry.raptor), built after its Summary.
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS raptor_status text NOT NULL DEFAULT 'pending'
+    CHECK (raptor_status IN ('pending', 'ready', 'failed'));
 
 -- Summaries, used only to find Chunks: never cited. One per Document (kind 'document'),
 -- or one per RAPTOR node (kind 'raptor'; level 1 and up; document_id NULL for the

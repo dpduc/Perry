@@ -78,13 +78,13 @@ def test_a_failing_summary_model_leaves_the_document_searchable_and_the_next_sta
 
 
 def test_reupload_replaces_the_summary_and_metadata(summary_model, upload):
-    summary_model.replies += [
-        summary_reply("Launch plan for March.", "2025-03-01", "Launch"),
-        summary_reply("Revised launch plan for June.", "2025-06-01", "Launch revision"),
-    ]
+    summary_model.replies.append(summary_reply("Launch plan for March.", "2025-03-01", "Launch"))
     upload("plan.md", "The launch is in March.")
     summaries.summarise_pending()
 
+    summary_model.replies.append(
+        summary_reply("Revised launch plan for June.", "2025-06-01", "Launch revision")
+    )
     upload("plan.md", "The launch moved to June.")
     assert summaries.document("plan.md") == summaries.DocumentSummary(status=summaries.PENDING)
 
@@ -116,12 +116,12 @@ def test_the_upload_estimate_counts_summarising_on_the_local_model_as_free(
 
     estimate = estimate_ingestion([file])
 
-    summary, summary_embedding = estimate.background
+    summary, summary_embedding, *_ = estimate.background  # then the RAPTOR tree's calls
     assert (summary.kind, summary.model, summary.cost_usd) == ("summary", "qwen3:8b", 0)
     # Embedding the Summary is paid, and counts toward the Daily Cap.
     assert summary_embedding.kind == "embedding"
-    assert estimate.cost_usd == pytest.approx(
-        (12 + summary_embedding.input_tokens) * 1000 / 1_000_000
+    assert summary_embedding.cost_usd == pytest.approx(
+        summary_embedding.input_tokens * 1000 / 1_000_000
     )
 
 

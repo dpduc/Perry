@@ -2429,6 +2429,7 @@ dependencies = [
     { name = "pylate" },
     { name = "pymupdf" },
     { name = "python-dotenv" },
+    { name = "scikit-learn" },
     { name = "torch", version = "2.11.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'darwin'" },
     { name = "torch", version = "2.11.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform != 'darwin'" },
 ]
@@ -2456,6 +2457,7 @@ requires-dist = [
     { name = "pylate", specifier = ">=1.6.0" },
     { name = "pymupdf", specifier = ">=1.28.2" },
     { name = "python-dotenv", specifier = ">=1.2.4" },
+    { name = "scikit-learn", specifier = ">=1.9.1" },
     { name = "torch", specifier = ">=2.11.0", index = "https://download.pytorch.org/whl/cpu" },
 ]
 

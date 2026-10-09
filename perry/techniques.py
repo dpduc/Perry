@@ -201,6 +201,14 @@ def colbert(question: str) -> list[SearchHit]:
     return colbert_index.search(question)
 
 
+@chain
+def raptor(question: str) -> list[SearchHit]:
+    """RAPTOR: match the question against every node of the Documents' RAPTOR trees and
+    the cross-Document level above them (only ready trees), then return the leaf Chunks
+    beneath the best nodes. A node's Summary is never returned, so never cited."""
+    return summary_search(question, kind="raptor")
+
+
 TECHNIQUES: tuple[Technique, ...] = (
     Technique(
         name="hybrid_search",
@@ -321,6 +329,25 @@ TECHNIQUES: tuple[Technique, ...] = (
             "What is the vendor evaluation report about?",
         ),
         chain=document_summaries,
+        needs_summaries=True,
+    ),
+    Technique(
+        name="raptor",
+        label="RAPTOR",
+        description=(
+            "Match the question against summaries of related passages at every level, "
+            "from groups of passages up to themes across all the user's Documents, then "
+            "return the passages beneath the best matches. Best for thematic or 'overall' "
+            "questions that need the big picture across many passages or Documents."
+        ),
+        examples=(
+            "What themes keep coming up across all my meeting notes?",
+            "Overall, how did the team feel about the reorganisation?",
+            "What is the big picture of our product strategy across these files?",
+            "What do my documents say in general about working with contractors?",
+            "Across everything I uploaded, what are the recurring cost concerns?",
+        ),
+        chain=raptor,
         needs_summaries=True,
     ),
     Technique(

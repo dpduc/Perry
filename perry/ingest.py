@@ -14,7 +14,7 @@ from pathlib import Path
 
 from pgvector import Vector
 
-from perry import colbert, db, models, summaries, usage
+from perry import colbert, db, models, raptor, summaries, usage
 from perry.documents import (
     Chunk,
     ParsedDocument,
@@ -127,10 +127,13 @@ def estimate_file(path: Path) -> list[EstimatedCall] | None:
 
 def estimate_background(path: Path) -> list[EstimatedCall]:
     """The model calls made in the background after ingesting `path`: its Summary on
-    the local model, then embedding the Summary."""
+    the local model, then embedding the Summary; its RAPTOR tree's node Summaries on the
+    local model, then embedding them."""
     if not models.summaries_supported():
         return []
-    text = summaries.input_text([chunk.text for chunk in parse(path).chunks])
+    chunks = [chunk.text for chunk in parse(path).chunks]
+    text = summaries.input_text(chunks)
+    tree_in, tree_out, _ = raptor.estimate([models.estimate_tokens([c]) for c in chunks])
     return [
         EstimatedCall(
             "summary",
@@ -139,6 +142,8 @@ def estimate_background(path: Path) -> list[EstimatedCall]:
             summaries.OUTPUT_TOKENS,
         ),
         EstimatedCall("embedding", models.embedding_model(), summaries.OUTPUT_TOKENS),
+        EstimatedCall("raptor", models.summary_model_name(), tree_in, tree_out),
+        EstimatedCall("embedding", models.embedding_model(), tree_out),
     ]
 
 
