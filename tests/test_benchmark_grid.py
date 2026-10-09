@@ -180,7 +180,7 @@ def budget(perry, prices):
 def test_a_forced_technique_answers_with_its_citations_cost_and_model(budget):
     budget.script(
         with_usage(call("hybrid_search", question=BUDGET_QUESTION), 100, 50),
-        with_usage(last_message, 100, 50),  # the Knowledge Agent reports the passages
+        with_usage(last_message, 100, 50),  # the Knowledge Agent reports the Chunks
     )
 
     answer = grid.ask_perry("hybrid_search", BUDGET_QUESTION)
@@ -217,7 +217,6 @@ def test_the_grid_has_every_technique_forced_and_every_picking_mode():
 
     assert every == [*(t.name for t in techniques.TECHNIQUES), *picking.MODES]
     assert len(every) == 13
-    assert grid.PICKING_MODES == picking.MODES
 
 
 def test_a_run_can_be_limited_to_named_setups_and_always_hybrid_is_hybrid_search():

@@ -449,7 +449,7 @@ if __name__ == "__main__":
     if notice:
         print(notice)
     db.init_schema()
-    # Retry Summaries that failed (e.g. Ollama wasn't running) and finish pending ones.
+    # Retry Summaries that failed (e.g. the local model wasn't running) and finish pending ones.
     summaries.resume()
     colbert.ensure_in_step()  # e.g. Documents stored before ColBERT, or after a crash
     build(notice).launch(server_name="127.0.0.1", allowed_paths=[str(charts.directory())])

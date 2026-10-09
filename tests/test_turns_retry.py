@@ -15,7 +15,7 @@ def test_step_that_fails_once_then_succeeds_gives_a_normal_answer(perry):
         call("ask_knowledge_agent", question="What is the Q3 marketing budget?"),  # Supervisor
         rate_limited(),  # Knowledge Agent's first attempt fails
         call("hybrid_search", question="Q3 marketing budget"),  # retry
-        last_message,  # Knowledge Agent reports the passages it found
+        last_message,  # Knowledge Agent reports the Chunks it found
         last_message,  # Supervisor passes the findings on
     )
 
@@ -42,7 +42,7 @@ def two_step_turn_where_the_second_step_fails_twice(perry):
         call("ask_knowledge_agent", question="What is the Q3 marketing budget?"),
         call("hybrid_search", question="Q3 marketing budget"),
         "The Q3 marketing budget is 40,000 dollars [budget.md].",
-        # Step 2: the Knowledge Agent finds passages, then its model fails, twice.
+        # Step 2: the Knowledge Agent finds Chunks, then its model fails, twice.
         call("ask_knowledge_agent", question="Is the ridge path steep?"),
         call("hybrid_search", question="ridge path steep"),
         rate_limited(),

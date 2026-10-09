@@ -32,8 +32,6 @@ class Answer:
 
 Ask = Callable[[str, str], Answer]  # (setup, question) -> Answer
 
-# The picking modes as perry.picking names them (a test keeps the two in step).
-PICKING_MODES = ("semantic", "logical", "cascade")
 # Always-hybrid (Perry before Retrieval Techniques: the Knowledge Agent with hybrid search
 # as its one tool) is exactly hybrid search forced, so it shares that setup and its cost.
 ALWAYS_HYBRID = "hybrid_search"
@@ -42,11 +40,18 @@ _ALIASES = {"always-hybrid": ALWAYS_HYBRID, "always_hybrid": ALWAYS_HYBRID}
 _NOT_CHAT = ("embedding", "colbert")
 
 
+def picking_modes() -> tuple[str, ...]:
+    """The picking modes, as `perry.picking` names them."""
+    from perry import picking
+
+    return picking.MODES
+
+
 def setups() -> list[str]:
     """Every setup in the grid: each Retrieval Technique forced, then each picking mode."""
     from perry import techniques
 
-    return [*(t.name for t in techniques.TECHNIQUES), *PICKING_MODES]
+    return [*(t.name for t in techniques.TECHNIQUES), *picking_modes()]
 
 
 def select(only: list[str] | None) -> list[str]:
@@ -72,11 +77,11 @@ def _needs_summaries(setups: list[str]) -> bool:
     from perry import techniques
 
     summary_based = {t.name for t in techniques.TECHNIQUES if t.needs_summaries}
-    return any(s in summary_based or s in PICKING_MODES for s in setups)
+    return any(s in summary_based or s in picking_modes() for s in setups)
 
 
 def _needs_colbert(setups: list[str]) -> bool:
-    return any(s == "colbert" or s in PICKING_MODES for s in setups)
+    return any(s == "colbert" or s in picking_modes() for s in setups)
 
 
 def prepare(setups: list[str], documents: list[Path]) -> None:
@@ -102,10 +107,7 @@ def prepare(setups: list[str], documents: list[Path]) -> None:
     if not _needs_summaries(setups):
         return
     if not models.summaries_supported():
-        raise NotReady(
-            "These setups search Summaries, but there is no local summary model. "
-            f"Start Ollama with {models.SUMMARY_MODEL} (PERRY_SUMMARY_MODEL)."
-        )
+        raise NotReady(f"These setups search Summaries. {models.summary_model_hint()}")
     summaries.retry_failed()
     print("Summarising and building RAPTOR trees on the local model (slow)...", flush=True)
     summaries.summarise_pending()
@@ -117,7 +119,7 @@ def prepare(setups: list[str], documents: list[Path]) -> None:
     if rows:
         names = ", ".join(row["name"] for row in rows)
         raise NotReady(
-            f"Not summarised: {names}. Is Ollama running with {models.SUMMARY_MODEL}? "
+            f"Not summarised: {names}. {models.summary_model_hint()} "
             "Rerun to retry; finished Documents are kept."
         )
 
@@ -129,7 +131,7 @@ def ask_perry(setup: str, question: str) -> Answer:
     from perry import models, usage
     from perry.agents import knowledge
 
-    forced, mode = (None, setup) if setup in PICKING_MODES else (setup, None)
+    forced, mode = (None, setup) if setup in picking_modes() else (setup, None)
     with usage.turn(f"benchmark-{setup}") as turn:
         try:
             findings = knowledge.find(question, forced, picking_mode=mode)
@@ -211,7 +213,7 @@ def run_grid(
 
 
 def label(setup: str) -> str:
-    if setup in PICKING_MODES:
+    if setup in picking_modes():
         return f"picking: {setup}"
     if setup == ALWAYS_HYBRID:
         return f"{setup} (= always-hybrid)"

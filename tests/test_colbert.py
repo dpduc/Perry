@@ -1,4 +1,4 @@
-"""ColBERT: a late-interaction retriever with its own on-disk index (ADR-0002), kept in
+"""ColBERT: a late-interaction Retrieval Technique with its own on-disk index (ADR-0002), kept in
 step with Postgres by ingestion. Uses the real index with the fake ColBERT encoder."""
 
 import pytest
@@ -152,7 +152,7 @@ def test_forcing_colbert_in_a_turn_answers_with_citations_and_found_with(
         perry.script(
             call("ask_knowledge_agent", question="What is the Q3 marketing budget?"),
             call("colbert", question="Q3 marketing budget"),
-            last_message,  # Knowledge Agent reports the passages it found
+            last_message,  # Knowledge Agent reports the Chunks it found
             last_message,  # Supervisor passes the findings on
         )
 

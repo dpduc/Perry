@@ -319,6 +319,20 @@ def summaries_supported() -> bool:
     return _provider().summary_model is not None
 
 
+def summary_model_hint() -> str:
+    """One line for the user on what writes Summaries, for when they aren't being written,
+    so no other module needs to know which local model or server that is."""
+    if not summaries_supported():
+        return (
+            "Summaries need the local summary model, and this model provider has none "
+            f"(Perry's default is {SUMMARY_MODEL} on Ollama)."
+        )
+    return (
+        f"Summaries are written by the local model {summary_model_name()}: is Ollama "
+        f"running at {OLLAMA_URL} with it (PERRY_SUMMARY_MODEL)?"
+    )
+
+
 def summary_model_name() -> str:
     """The name the usage ledger prices summary calls by."""
     return _provider().summary_model_name

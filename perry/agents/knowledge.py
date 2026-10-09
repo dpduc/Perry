@@ -15,15 +15,15 @@ from perry import models, picking, retries, techniques
 from perry.techniques import Technique
 
 SYSTEM_PROMPT = """You are Perry's Knowledge Agent. You answer questions using ONLY \
-passages from the user's Documents, found with your search tools. Each tool is a \
-different way of searching (a Retrieval Technique); pick the one whose description \
+Chunks (excerpts) of the user's Documents, found with your search tools. Each tool is \
+a different way of searching (a Retrieval Technique); pick the one whose description \
 best fits the question.
 
 - Search before answering. If the first search misses, rephrase and search again \
 (at most 3 searches).
-- Cite every claim with the passage's citation in square brackets, exactly as given, \
+- Cite every claim with the Chunk's citation in square brackets, exactly as given, \
 e.g. [report.pdf#page=4].
-- If the passages don't answer the question, say plainly that the Documents don't \
+- If the Chunks don't answer the question, say plainly that the Documents don't \
 contain it. Never fill gaps from general knowledge.
 - Be concise: report the findings, not a polished essay."""
 

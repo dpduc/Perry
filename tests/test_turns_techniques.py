@@ -11,7 +11,7 @@ def ask_about_budget(perry, technique_call: str = "hybrid_search", **send) -> st
     perry.script(
         call("ask_knowledge_agent", question="What is the Q3 marketing budget?"),  # Supervisor
         call(technique_call, question="Q3 marketing budget"),  # Knowledge Agent picks
-        last_message,  # Knowledge Agent reports the passages it found
+        last_message,  # Knowledge Agent reports the Chunks it found
         last_message,  # Supervisor passes the findings on
     )
     return perry.send("How big is my Q3 marketing budget?", **send)
@@ -83,7 +83,7 @@ def test_a_forced_query_translation_technique_answers_with_citations(
         call("ask_knowledge_agent", question="What is the Q3 marketing budget?"),  # Supervisor
         call(technique, question="Q3 marketing budget"),  # Knowledge Agent
         model_reply,  # the technique's own model call (broader question / hypothetical)
-        last_message,  # Knowledge Agent reports the passages it found
+        last_message,  # Knowledge Agent reports the Chunks it found
         last_message,  # Supervisor passes the findings on
     )
 
@@ -106,7 +106,7 @@ def compare_budget_and_hike(perry, **send) -> str:
         call("ask_knowledge_agent", question=question),  # Supervisor
         call("question_decomposition", question=question),  # Knowledge Agent
         "What is the Q3 marketing budget?\nHow steep is the ridge path?",  # sub-questions
-        last_message,  # Knowledge Agent reports the passages it found
+        last_message,  # Knowledge Agent reports the Chunks it found
         last_message,  # Supervisor passes the findings on
     )
     return perry.send("How big is my Q3 budget, and is the ridge path steep?", **send)
@@ -184,7 +184,7 @@ def ask_with_rewrites(perry, technique: str, *rewrite_steps) -> str:
         call("ask_knowledge_agent", question="What is the Q3 marketing budget?"),  # Supervisor
         call(technique, question="Q3 marketing budget"),  # Knowledge Agent
         *rewrite_steps,  # the technique rewrites the question
-        last_message,  # Knowledge Agent reports the passages it found
+        last_message,  # Knowledge Agent reports the Chunks it found
         last_message,  # Supervisor passes the findings on
     )
     return perry.send("How big is my Q3 marketing budget?", technique=technique)

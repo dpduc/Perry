@@ -173,7 +173,7 @@ def test_forced_self_query_answers_with_citations_and_its_found_with_line(perry)
         call("ask_knowledge_agent", question=question),  # Supervisor
         call("self_query", question=question),  # Knowledge Agent
         json.dumps({"query": "marketing budget", "name": "2025 budget"}),  # the filter
-        last_message,  # Knowledge Agent reports the passages it found
+        last_message,  # Knowledge Agent reports the Chunks it found
         last_message,  # Supervisor passes the findings on
     )
 

@@ -13,7 +13,7 @@ def test_document_summaries_answers_with_page_citations_and_names_itself(perry):
     perry.script(
         call("ask_knowledge_agent", question="Which document has the Q3 marketing budget?"),
         call("document_summaries", question="Q3 marketing budget"),
-        last_message,  # Knowledge Agent reports the passages it found
+        last_message,  # Knowledge Agent reports the Chunks it found
         last_message,  # Supervisor passes the findings on
     )
 
@@ -49,7 +49,7 @@ def test_forced_raptor_answers_with_page_citations_and_names_itself(perry):
     perry.script(
         call("ask_knowledge_agent", question="What do my documents say about the marketing budget?"),
         call("raptor", question="marketing budget overall"),
-        last_message,  # Knowledge Agent reports the passages it found
+        last_message,  # Knowledge Agent reports the Chunks it found
         last_message,  # Supervisor passes the findings on
     )
 

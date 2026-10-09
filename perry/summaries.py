@@ -4,7 +4,7 @@ An upload returns as soon as its Document is searchable by hybrid search, with i
 summarising status `pending`. Then, one Document at a time, a background job asks the
 local summary model (`models.summary_model()`) for one Summary of the Document plus a
 Document date and topic, embeds the Summary, and marks the Document `ready`. A Document
-whose summarising fails (e.g. Ollama isn't running) stays searchable, is marked
+whose summarising fails (e.g. the local model isn't running) stays searchable, is marked
 `failed`, and is retried on the next start (`resume()`).
 
 A Summary is used only to find Chunks, never cited: each one is linked to the Chunks it

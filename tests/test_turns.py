@@ -19,7 +19,7 @@ def test_question_about_documents_is_answered_by_the_knowledge_agent_with_citati
     perry.script(
         call("ask_knowledge_agent", question="What is the Q3 marketing budget?"),  # Supervisor
         call("hybrid_search", question="Q3 marketing budget"),  # Knowledge Agent
-        last_message,  # Knowledge Agent reports the passages it found
+        last_message,  # Knowledge Agent reports the Chunks it found
         last_message,  # Supervisor passes the findings on
     )
 

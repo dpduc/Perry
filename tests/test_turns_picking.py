@@ -61,7 +61,7 @@ def ask(perry, question: str, technique_call: str, **send) -> str:
     perry.script(
         call("ask_knowledge_agent", question=question),  # Supervisor
         call(technique_call, question=question),  # Knowledge Agent searches
-        last_message,  # Knowledge Agent reports the passages it found
+        last_message,  # Knowledge Agent reports the Chunks it found
         last_message,  # Supervisor passes the findings on
     )
     return perry.send(question, **send)

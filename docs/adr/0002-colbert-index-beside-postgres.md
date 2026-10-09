@@ -1,6 +1,6 @@
 # ColBERT keeps its own on-disk index beside Postgres
 
-ColBERT is one of the Knowledge Agent's Retrieval Techniques, and it runs as a full retriever with its own on-disk index (PLAID, written by a local ColBERT model under Perry's app-data folder), not only as a reranker over hybrid search's candidates. Late interaction stores a vector per token and scores with MaxSim, which pgvector can't do, so a real ColBERT retriever can't live in Postgres. We chose a full retriever over the reranker, which needs no index, because the point is to compare three independent retrievers (hybrid, Summaries, ColBERT) on the benchmark, and a reranker only reorders hybrid search's results.
+ColBERT is one of the Knowledge Agent's Retrieval Techniques, and it searches all the Chunks itself, from its own on-disk index (PLAID, written by a local ColBERT model under Perry's app-data folder), rather than only reranking hybrid search's candidates. Late interaction stores a vector per token and scores with MaxSim, which pgvector can't do, so a full late-interaction index can't live in Postgres. We chose the full index over reranking, which needs no index, because the point is to compare three independent Retrieval Techniques (hybrid search, Summaries, ColBERT) on the benchmark, and reranking only reorders hybrid search's results.
 
 ## Consequences
 

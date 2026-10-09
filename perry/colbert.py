@@ -118,7 +118,7 @@ def search(question: str, limit: int = 6) -> list[SearchHit]:
             "JOIN documents d ON d.id = c.document_id WHERE c.id = ANY(%s)",
             (list(scores),),
         ).fetchall()
-    hits = [SearchHit(r["name"], r["page"], r["text"], scores[r["id"]]) for r in rows]
+    hits = [SearchHit.from_row(row, scores[row["id"]]) for row in rows]
     return sorted(hits, key=lambda hit: -hit.score)[:limit]
 
 
@@ -214,9 +214,11 @@ def _plaid(index_folder: Path):
     from fast_plaid.search import fast_plaid as module
 
     # Every open looks for torch's library with recursive globs (seconds on Windows),
-    # and the answer never changes: look once.
-    if not hasattr(module._load_torch_path, "cache_info"):
-        module._load_torch_path = functools.cache(module._load_torch_path)
+    # and the answer never changes: look once. The function is private to fast-plaid
+    # (pinned in pyproject.toml); if a version lacks it, opening is just slower.
+    load_torch_path = getattr(module, "_load_torch_path", None)
+    if callable(load_torch_path) and not hasattr(load_torch_path, "cache_info"):
+        module._load_torch_path = functools.cache(load_torch_path)
     return FastPlaid(index=str(index_folder / _PLAID), device="cpu")
 
 

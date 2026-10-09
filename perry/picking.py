@@ -29,11 +29,12 @@ MODES = (SEMANTIC, LOGICAL, CASCADE)
 DEFAULT_CASCADE_MARGIN = 0.074
 
 
-def mode() -> str:
-    """The picking mode in force (PERRY_PICKING_MODE, default cascade)."""
-    setting = os.getenv("PERRY_PICKING_MODE", CASCADE).strip().lower()
+def mode(override: str | None = None) -> str:
+    """The picking mode in force: `override` if given, else PERRY_PICKING_MODE (default
+    cascade). Raises ValueError for a mode that isn't one of MODES."""
+    setting = (override or os.getenv("PERRY_PICKING_MODE", CASCADE)).strip().lower()
     if setting not in MODES:
-        raise ValueError(f"PERRY_PICKING_MODE must be one of {MODES}, not {setting!r}")
+        raise ValueError(f"The picking mode must be one of {MODES}, not {setting!r}")
     return setting
 
 
@@ -47,9 +48,7 @@ def pick(
     """The technique semantic picking settles on for `question`, or None to leave the
     choice to the Knowledge Agent's model (logical picking). `picking_mode` overrides
     the setting (the benchmark compares the modes)."""
-    picking = picking_mode or mode()
-    if picking not in MODES:
-        raise ValueError(f"The picking mode must be one of {MODES}, not {picking!r}")
+    picking = mode(picking_mode)
     if picking == LOGICAL or not candidates:
         return None
     if len(candidates) == 1:

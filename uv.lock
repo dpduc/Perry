@@ -2414,6 +2414,7 @@ name = "perry"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "fast-plaid" },
     { name = "google-api-python-client" },
     { name = "google-auth-oauthlib" },
     { name = "gradio" },
@@ -2442,6 +2443,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "fast-plaid", specifier = "==1.4.6.2110" },
     { name = "google-api-python-client", specifier = ">=2.201.0" },
     { name = "google-auth-oauthlib", specifier = ">=1.5.0" },
     { name = "gradio", specifier = ">=6.29.1" },

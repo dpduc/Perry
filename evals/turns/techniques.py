@@ -65,7 +65,7 @@ TURNS = [
         ("team-offsite.md",),
         ("Trains from Lyon every two hours; meet at the lodge at 10:00.",),
     ),
-    # RAG fusion: broad questions where the most relevant passages should come first.
+    # RAG fusion: broad questions where the most relevant Chunks should come first.
     _turn(
         "rag-fusion-marketing-spend",
         "How is the marketing money being spent this quarter?",

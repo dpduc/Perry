@@ -49,10 +49,10 @@ INPUT_CHARS = 10_000
 PROMPT_TOKENS = 100
 OUTPUT_TOKENS = 150
 
-NODE_PROMPT = """You summarise related passages from the user's documents so the summary \
+NODE_PROMPT = """You summarise related excerpts of the user's documents so the summary \
 can be found later by its themes. Write 3 to 5 sentences covering the main themes, key \
-names, figures and conclusions the passages share or differ on. Use only what the \
-passages say, in their language. Reply with the summary only."""
+names, figures and conclusions the excerpts share or differ on. Use only what the \
+excerpts say, in their language. Reply with the summary only."""
 
 
 @dataclass(frozen=True)
@@ -111,9 +111,9 @@ def _array(vector) -> np.ndarray:
 
 
 def _summarise(drafts: list[_Draft]) -> str:
-    passages = "\n\n".join(draft.text for draft in drafts)[:INPUT_CHARS]
+    texts = "\n\n".join(draft.text for draft in drafts)[:INPUT_CHARS]
     reply = models.summary_model(kind=KIND).invoke(
-        [SystemMessage(NODE_PROMPT), HumanMessage(passages)]
+        [SystemMessage(NODE_PROMPT), HumanMessage(texts)]
     )
     text, _, _ = summaries.parse_reply(reply.text)  # tolerates a JSON reply
     return text

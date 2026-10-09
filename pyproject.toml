@@ -6,6 +6,8 @@ requires-python = ">=3.11"
 dependencies = [
     "google-api-python-client>=2.201.0",
     "google-auth-oauthlib>=1.5.0",
+    # Pinned: perry/colbert.py patches one of its private functions (`_load_torch_path`).
+    "fast-plaid==1.4.6.2110",
     "gradio>=6.29.1",
     "langchain>=1.4.3",
     "langchain-google-genai>=4.4.0",

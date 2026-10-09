@@ -53,6 +53,13 @@ class SearchHit:
     def citation(self) -> str:
         return citation(self.document, self.page)
 
+    @classmethod
+    def from_row(cls, row: dict, score: float | None = None) -> "SearchHit":
+        """The hit for a row with the Chunk's Document `name`, `page` and `text`, scored
+        `score` (by default, the row's own `score`)."""
+        score = row["score"] if score is None else score
+        return cls(row["name"], row["page"], row["text"], float(score))
+
 
 @dataclass(frozen=True)
 class DocumentFilter:
@@ -158,7 +165,7 @@ def hybrid_search(
                 "SELECT set_config('hnsw.iterative_scan', 'relaxed_order', true)"
             )
         rows = conn.execute(sql, params).fetchall()
-    return [SearchHit(r["name"], r["page"], r["text"], float(r["score"])) for r in rows]
+    return [SearchHit.from_row(row) for row in rows]
 
 
 # Summary search: how many Summaries may match, and how many of the best Chunks
@@ -217,4 +224,4 @@ def summary_search(
     }
     with db.pool().connection() as conn:
         rows = conn.execute(SUMMARY_SQL.format(status=_STATUS[kind]), params).fetchall()
-    return [SearchHit(r["name"], r["page"], r["text"], float(r["score"])) for r in rows]
+    return [SearchHit.from_row(row) for row in rows]

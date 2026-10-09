@@ -11,6 +11,7 @@ technique costs and its calls count toward the Turn's Token Ceiling.
 """
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from itertools import zip_longest
 
@@ -67,10 +68,29 @@ def sub_questions(question: str) -> list[str]:
     the question itself if the model gave none."""
     prompt = DECOMPOSE_PROMPT.format(most=MAX_SUB_QUESTIONS, question=question)
     reply = models.chat_model(kind="decompose").invoke(prompt).text
-    # Models often number or bullet the lines anyway: drop that.
+    return _lines(reply)[:MAX_SUB_QUESTIONS] or [question]
+
+
+def _lines(reply: str) -> list[str]:
+    """The distinct non-empty lines of a model's reply, without the bullets or numbers
+    models often put on them anyway."""
     lines = (_LIST_MARKER.sub("", line).strip() for line in reply.splitlines())
-    found = list(dict.fromkeys(line for line in lines if line))
-    return found[:MAX_SUB_QUESTIONS] or [question]
+    return list(dict.fromkeys(line for line in lines if line))
+
+
+def _key(hit: SearchHit) -> tuple[str, int, str]:
+    """What makes two hits the same Chunk."""
+    return (hit.document, hit.page, hit.text)
+
+
+def _union(*rankings: Iterable[SearchHit | None]) -> list[SearchHit]:
+    """Every Chunk in `rankings`, each once, in the order first found (None is skipped)."""
+    union: dict[tuple[str, int, str], SearchHit] = {}
+    for hits in rankings:
+        for hit in hits:
+            if hit is not None:
+                union.setdefault(_key(hit), hit)
+    return list(union.values())
 
 
 @chain
@@ -81,16 +101,12 @@ def question_decomposition(question: str) -> list[SearchHit]:
         hybrid_search(sub_question, limit=CHUNKS_PER_SUB_QUESTION)
         for sub_question in sub_questions(question)
     ]
-    union: dict[tuple[str, int, str], SearchHit] = {}
-    for tier in zip_longest(*rankings):
-        for hit in tier:
-            if hit is not None:
-                union.setdefault((hit.document, hit.page, hit.text), hit)
-    return list(union.values())
+    # Tier by tier: every sub-question's best, then every second best, and so on.
+    return _union(*zip_longest(*rankings))
 
 
 REWRITE_PROMPT = """Rewrite the question below into {count} different search queries \
-for finding passages in the user's Documents. Vary the wording and the angle: use \
+for finding Chunks (excerpts) of the user's Documents. Vary the wording and the angle: use \
 synonyms, more specific and more general phrasings. Reply with the queries only, \
 one per line, with no numbering or comments.
 
@@ -107,27 +123,17 @@ def rewrites(question: str) -> list[str]:
     reply = models.chat_model(kind="rewrite").invoke(
         REWRITE_PROMPT.format(count=REWRITES, question=question)
     )
-    queries = [_LIST_MARKER.sub("", line).strip() for line in reply.text.splitlines()]
-    queries = list(dict.fromkeys(q for q in queries if q))
-    return queries or [question]
+    return _lines(reply.text) or [question]
 
 
 def _rewrite_results(question: str) -> list[list[SearchHit]]:
     return [hybrid_search(query) for query in rewrites.invoke(question)]
 
 
-def _key(hit: SearchHit) -> tuple[str, int, str]:
-    return (hit.document, hit.page, hit.text)
-
-
 @chain
 def multi_query(question: str) -> list[SearchHit]:
     """The union of every rewrite's Chunks, each once, in the order they were found."""
-    union: dict[tuple[str, int, str], SearchHit] = {}
-    for hits in _rewrite_results(question):
-        for hit in hits:
-            union.setdefault(_key(hit), hit)
-    return list(union.values())
+    return _union(*_rewrite_results(question))
 
 
 @chain
@@ -158,13 +164,7 @@ def step_back(question: str) -> list[SearchHit]:
     own Chunks first, then the background the broader question found."""
     prompt = STEP_BACK_PROMPT.format(question=question)
     broader = models.chat_model(kind="step_back").invoke(prompt).text.strip()
-    hits = hybrid_search(question)
-    seen = {(hit.document, hit.page, hit.text) for hit in hits}
-    for hit in hybrid_search(broader) if broader else []:
-        if (hit.document, hit.page, hit.text) not in seen:
-            seen.add((hit.document, hit.page, hit.text))
-            hits.append(hit)
-    return hits
+    return _union(hybrid_search(question), hybrid_search(broader) if broader else [])
 
 
 HYDE_PROMPT = """Write a short passage (two or three sentences) that could appear in a \
@@ -250,7 +250,7 @@ TECHNIQUES: tuple[Technique, ...] = (
         label="Multi-query",
         description=(
             "Rewrite a vague or loosely-worded question into several search queries and "
-            "gather the passages any of them finds. Best when the question's wording may "
+            "gather the Chunks any of them finds. Best when the question's wording may "
             "not match the Documents' wording and recall matters most."
         ),
         examples=(
@@ -266,9 +266,9 @@ TECHNIQUES: tuple[Technique, ...] = (
         name="rag_fusion",
         label="RAG fusion",
         description=(
-            "Rewrite the question into several search queries and rank the passages by "
+            "Rewrite the question into several search queries and rank the Chunks by "
             "how many queries agree on them. Best for broad or ambiguous questions where "
-            "the most relevant passages should come first."
+            "the most relevant Chunks should come first."
         ),
         examples=(
             "What are the main risks in our expansion plans?",
@@ -301,7 +301,7 @@ TECHNIQUES: tuple[Technique, ...] = (
         label="HyDE",
         description=(
             "Write a short hypothetical answer to the question and search the user's "
-            "Documents for passages like it. Best for short or casually worded questions "
+            "Documents for Chunks like it. Best for short or casually worded questions "
             "whose words are far from how the Documents would phrase the answer."
         ),
         examples=(
@@ -318,7 +318,7 @@ TECHNIQUES: tuple[Technique, ...] = (
         label="Document Summaries",
         description=(
             "Find the Documents whose Summaries best match the question, then return "
-            "their best-matching passages. Best for finding which Document covers a "
+            "their best-matching Chunks. Best for finding which Document covers a "
             "subject, or questions about what a Document as a whole is about."
         ),
         examples=(
@@ -335,10 +335,10 @@ TECHNIQUES: tuple[Technique, ...] = (
         name="raptor",
         label="RAPTOR",
         description=(
-            "Match the question against summaries of related passages at every level, "
-            "from groups of passages up to themes across all the user's Documents, then "
-            "return the passages beneath the best matches. Best for thematic or 'overall' "
-            "questions that need the big picture across many passages or Documents."
+            "Match the question against Summaries of related Chunks at every level, "
+            "from groups of Chunks up to themes across all the user's Documents, then "
+            "return the Chunks beneath the best matches. Best for thematic or 'overall' "
+            "questions that need the big picture across many Chunks or Documents."
         ),
         examples=(
             "What themes keep coming up across all my meeting notes?",
@@ -374,8 +374,8 @@ TECHNIQUES: tuple[Technique, ...] = (
         label="ColBERT",
         description=(
             "Search the user's Documents matching the question word by word against "
-            "every passage. Best when the question hinges on an exact name, code, "
-            "product or rare term that must appear in the passage."
+            "every Chunk. Best when the question hinges on an exact name, code, "
+            "product or rare term that must appear in the Chunk."
         ),
         examples=(
             "What does the Orion-4 maintenance log say about the hydraulic pump?",
