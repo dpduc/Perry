@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Perry Database Analytics & Health Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card-bg: #1e293b;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --border: #334155;
+      --accent: #38bdf8;
+      --accent-purple: #a855f7;
+      --accent-emerald: #10b981;
+      --accent-amber: #f59e0b;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 24px;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .header h1 { font-size: 24px; font-weight: 700; color: var(--accent); }
+    .header .meta { color: var(--text-muted); font-size: 14px; }
+    .grid-kpi {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .kpi-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+    }
+    .kpi-title { font-size: 13px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+    .kpi-value { font-size: 26px; font-weight: 700; margin-top: 6px; color: #fff; }
+    .grid-charts {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+      gap: 20px;
+      margin-bottom: 24px;
+    }
+    .chart-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+    }
+    .chart-card h2 {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .chart-container { position: relative; height: 260px; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+      margin-top: 8px;
+    }
+    th, td {
+      padding: 10px 12px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+    th { color: var(--text-muted); font-weight: 600; }
+    tr:hover { background: rgba(255, 255, 255, 0.03); }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 9999px;
+      font-size: 12px;
+      background: rgba(56, 189, 248, 0.2);
+      color: var(--accent);
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <h1>Perry Database Analytics & Health</h1>
+      <div class="meta">PostgreSQL 17 + pgvector (Container: <code>perry-db-1</code> on port 5433)</div>
+    </div>
+    <div class="badge">Live Snapshot</div>
+  </div>
+
+  <div class="grid-kpi">
+    <div class="kpi-card">
+      <div class="kpi-title">Total Database Size</div>
+      <div class="kpi-value">9950 kB</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-title">Total LLM Cost</div>
+      <div class="kpi-value" style="color: var(--accent-emerald);">$0.0050</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-title">Total Tokens Logged</div>
+      <div class="kpi-value" style="color: var(--accent);">5,681</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-title">Ingested Documents</div>
+      <div class="kpi-value">2 <span style="font-size: 14px; color: var(--text-muted);">(46 chunks)</span></div>
+    </div>
+  </div>
+
+  <div class="grid-charts">
+    <!-- Cost by Agent Kind -->
+    <div class="chart-card">
+      <h2>Agent Cost Distribution (Kind)</h2>
+      <div class="chart-container">
+        <canvas id="kindChart"></canvas>
+      </div>
+    </div>
+
+    <!-- Storage by Table -->
+    <div class="chart-card">
+      <h2>Storage Footprint per Table (KB)</h2>
+      <div class="chart-container">
+        <canvas id="storageChart"></canvas>
+      </div>
+    </div>
+
+    <!-- Chunks per Document -->
+    <div class="chart-card">
+      <h2>Chunks per Document</h2>
+      <div class="chart-container">
+        <canvas id="docChart"></canvas>
+      </div>
+    </div>
+
+    <!-- Table Row Counts -->
+    <div class="chart-card">
+      <h2>Row Count per Table</h2>
+      <div class="chart-container">
+        <canvas id="rowsChart"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tables Section -->
+  <div class="chart-card">
+    <h2>Detailed Table Statistics</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Table Name</th>
+          <th>Estimated Rows</th>
+          <th>Total Size on Disk</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td><code>chunks</code></td><td>46</td><td>968 kB</td></tr><tr><td><code>checkpoint_blobs</code></td><td>108</td><td>360 kB</td></tr><tr><td><code>checkpoint_writes</code></td><td>111</td><td>280 kB</td></tr><tr><td><code>checkpoints</code></td><td>73</td><td>208 kB</td></tr><tr><td><code>usage_ledger</code></td><td>16</td><td>64 kB</td></tr><tr><td><code>documents</code></td><td>2</td><td>48 kB</td></tr><tr><td><code>threads</code></td><td>4</td><td>32 kB</td></tr><tr><td><code>checkpoint_migrations</code></td><td>10</td><td>24 kB</td></tr><tr><td><code>datasets</code></td><td>0</td><td>16 kB</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <script>
+    const colors = ['#38bdf8', '#a855f7', '#10b981', '#f59e0b', '#ec4899', '#6366f1', '#14b8a6', '#f43f5e'];
+
+    // 1. Kind Chart
+    new Chart(document.getElementById('kindChart'), {
+      type: 'doughnut',
+      data: {
+        labels: ["chat", "text_to_speech", "embedding"],
+        datasets: [{
+          data: [0.0041, 0.0009, 0.0],
+          backgroundColor: colors,
+          borderWidth: 0
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { labels: { color: '#94a3b8' } } }
+      }
+    });
+
+    // 2. Storage Chart
+    new Chart(document.getElementById('storageChart'), {
+      type: 'bar',
+      data: {
+        labels: ["chunks", "checkpoint_blobs", "checkpoint_writes", "checkpoints", "usage_ledger", "documents", "threads", "checkpoint_migrations", "datasets"],
+        datasets: [{
+          label: 'Total Size (KB)',
+          data: [968.0, 360.0, 280.0, 208.0, 64.0, 48.0, 32.0, 24.0, 16.0],
+          backgroundColor: '#38bdf8',
+          borderRadius: 6
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: { ticks: { color: '#94a3b8' }, grid: { display: false } },
+          y: { ticks: { color: '#94a3b8' }, grid: { color: '#334155' } }
+        }
+      }
+    });
+
+    // 3. Document Chunks Chart
+    new Chart(document.getElementById('docChart'), {
+      type: 'bar',
+      data: {
+        labels: ["The-Complete-Guide-to-Building-Skill-for-Claude.pdf", "team-handbook.md"],
+        datasets: [{
+          label: 'Chunks',
+          data: [45, 1],
+          backgroundColor: '#10b981',
+          borderRadius: 6
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        indexAxis: 'y',
+        scales: {
+          x: { ticks: { color: '#94a3b8' }, grid: { color: '#334155' } },
+          y: { ticks: { color: '#94a3b8' }, grid: { display: false } }
+        }
+      }
+    });
+
+    // 4. Rows Chart
+    new Chart(document.getElementById('rowsChart'), {
+      type: 'bar',
+      data: {
+        labels: ["chunks", "checkpoint_blobs", "checkpoint_writes", "checkpoints", "usage_ledger", "documents", "threads", "checkpoint_migrations", "datasets"],
+        datasets: [{
+          label: 'Rows',
+          data: [46, 108, 111, 73, 16, 2, 4, 10, 0],
+          backgroundColor: '#a855f7',
+          borderRadius: 6
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: { ticks: { color: '#94a3b8' }, grid: { display: false } },
+          y: { ticks: { color: '#94a3b8' }, grid: { color: '#334155' } }
+        }
+      }
+    });
+  </script>
+</body>
+</html>
