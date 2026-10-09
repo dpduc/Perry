@@ -29,6 +29,10 @@ _Avoid_: Action agent, execution agent
 **Turn**:
 One request from you and everything Perry does to answer it, possibly involving several Agents in sequence.
 
+**Task Decomposition**:
+The Supervisor splitting one request into steps for different Agents, such as finding notes with the Knowledge Agent and then emailing them with the Task Agent.
+_Avoid_: Decomposition (on its own), planning, query decomposition
+
 **Thread**:
 A resumable conversation made of Turns.
 _Avoid_: Session, chat, conversation history
@@ -58,6 +62,18 @@ _Avoid_: Snippet, passage, fragment
 **Citation**:
 A pointer from an answer to the exact document page a claim came from.
 _Avoid_: Source, reference
+
+**Retrieval Technique**:
+One way the Knowledge Agent can find Chunks for a question, such as rewriting it into several queries, searching with a hypothetical answer, or searching Summaries. Every Retrieval Technique ends in Chunks with Citations.
+_Avoid_: RAG technique, retriever, search mode
+
+**Question Decomposition**:
+The Retrieval Technique that splits one question into sub-questions, finds Chunks for each, and answers from all of them together.
+_Avoid_: Decomposition (on its own), task decomposition, sub-querying
+
+**Summary**:
+A model-written condensation of a Document, or of a group of related Chunks, used only to find Chunks. A Summary is never cited; answers cite the pages of the Chunks it led to.
+_Avoid_: Abstract, digest, overview
 
 **Dataset**:
 A table of your structured data (uploaded from CSV or a spreadsheet) that the Analysis Agent can query.

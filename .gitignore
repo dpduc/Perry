@@ -5,3 +5,4 @@ __pycache__/
 .gradio/
 .env
 benchmark/.storage/
+google_client.json
