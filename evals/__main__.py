@@ -3,12 +3,14 @@
     uv run python -m evals                      # every eval Turn
     uv run python -m evals knowledge-aphids ... # only these Turn ids (or id prefixes)
     uv run python -m evals --list
+    uv run python -m evals --tune-margin        # tune PERRY_CASCADE_MARGIN (embeddings only)
 
 Uses its own database (`perry_eval`, override with PERRY_EVAL_DATABASE_URL), loads
 `evals/documents/` into it, and runs each Turn on a fresh Thread. Model calls go through
 the provider's request pacing, so a full run takes several minutes on the free tier.
-Routing and Citation checks decide the exit code; the judge's quality score is
-only reported, and logged to LangSmith (project `perry-eval`) when tracing is on.
+Routing and Citation checks decide the exit code; the judge's quality score and the
+soft technique check (did the expected Retrieval Technique find the answer?) are only
+reported, and logged to LangSmith (project `perry-eval`) when tracing is on.
 """
 
 import os
@@ -21,10 +23,12 @@ EVAL_URL = os.getenv(
     "PERRY_EVAL_DATABASE_URL", "postgresql://perry:perry@127.0.0.1:5433/perry_eval"
 )
 os.environ["DATABASE_URL"] = EVAL_URL
+# The soft technique check reads which Retrieval Technique ran from the "Found with" line.
+os.environ["PERRY_SHOW_FOUND_WITH"] = "true"
 
 import psycopg
 
-from evals.harness import EvalTurn, Result, run_eval_turn
+from evals.harness import EvalTurn, Result, feedback, run_eval_turn
 from evals.turns import DATASETS_DIR, DOCUMENTS_DIR, all_turns
 
 LANGSMITH_PROJECT = "perry-eval"
@@ -137,26 +141,25 @@ def _traced(turn: EvalTurn):
         f"eval: {turn.id}",
         inputs={"message": turn.message},
         project_name=LANGSMITH_PROJECT,
-        metadata={"turn_id": turn.id, "expected_agents": list(turn.agents)},
+        metadata={
+            "turn_id": turn.id,
+            "expected_agents": list(turn.agents),
+            "expected_technique": turn.technique,
+        },
     ) as run_tree:
 
         def log(result: Result) -> None:
-            run_tree.end(outputs={"reply": result.reply, "consulted": result.consulted})
+            run_tree.end(
+                outputs={
+                    "reply": result.reply,
+                    "consulted": result.consulted,
+                    "techniques": result.techniques,
+                }
+            )
             try:
                 client = langsmith.Client()
-                for key, score in [
-                    ("routing", result.routing_ok),
-                    ("citations", result.citations_ok),
-                    ("confirmations", result.confirmations_ok),
-                    ("quality", result.quality),
-                ]:
-                    if score is not None:
-                        client.create_feedback(
-                            run_tree.id,
-                            key,
-                            score=float(score),
-                            comment=result.judge_comment if key == "quality" else None,
-                        )
+                for key, (score, comment) in feedback(result).items():
+                    client.create_feedback(run_tree.id, key, score=score, comment=comment)
             except Exception as error:  # noqa: BLE001
                 print(f"    (LangSmith logging failed: {type(error).__name__}: {error})")
 
@@ -177,7 +180,12 @@ def _summary(result: Result) -> str:
         problems.append(f"Confirmations {result.confirmations or 'none'}, expected {expected}")
     quality = "n/a" if result.quality is None else f"{result.quality:.2f}"
     verdict = "FAIL" if problems else "pass"
-    return "  ".join([verdict, f"quality {quality}", *problems, result.judge_comment]).rstrip()
+    notes = []
+    if result.technique_ok is False:  # soft: noted, never a failure
+        used = result.techniques or "no technique"
+        notes.append(f"(found with {used}, expected {result.turn.technique})")
+    parts = [verdict, f"quality {quality}", *problems, *notes, result.judge_comment]
+    return "  ".join(parts).rstrip()
 
 
 def main(args: list[str]) -> int:
@@ -186,6 +194,8 @@ def main(args: list[str]) -> int:
         for turn in turns:
             print(f"{turn.id}: {turn.message}")
         return 0
+    if "--tune-margin" in args:
+        return tune_margin(turns)
     if args:
         turns = [t for t in turns if any(t.id.startswith(a) for a in args)]
         if not turns:
@@ -195,12 +205,29 @@ def main(args: list[str]) -> int:
         results = run(turns)
 
     failed = [r for r in results if not r.passed]
+    checked = [r for r in results if r.technique_ok is not None]
+    matched = sum(bool(r.technique_ok) for r in checked)
     scores = [r.quality for r in results if r.quality is not None]
     average = f"{sum(scores) / len(scores):.2f}" if scores else "n/a"
     print(f"\n{len(results) - len(failed)}/{len(results)} passed; average quality {average}")
+    if checked:
+        print(f"Expected Retrieval Technique used in {matched}/{len(checked)} (not gating)")
     for result in failed:
         print(f"  FAIL {result.turn.id}")
     return 1 if failed else 0
+
+
+def tune_margin(turns: list[EvalTurn]) -> int:
+    """Print the cascade margin tuned on the eval Turns' expected techniques. Embedding
+    calls only (recorded in the eval database's Usage Ledger); no Documents needed."""
+    from evals.tuning import report, tune_cascade_margin
+    from perry import db, techniques
+
+    _create_database()
+    db.init_schema()
+    print(report(tune_cascade_margin(turns, list(techniques.TECHNIQUES))))
+    print("Record it as DEFAULT_CASCADE_MARGIN in perry/picking.py and in the README.")
+    return 0
 
 
 if __name__ == "__main__":

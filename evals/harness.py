@@ -9,7 +9,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from perry import models
+from perry import models, techniques
 from perry.supervisor import Approve, Confirmation
 
 
@@ -23,6 +23,8 @@ class EvalTurn:
     ("report.pdf#page=4"). `facts`: what the answer should say, scored by the judge only.
     `write_actions`: the Write Actions the Turn must pause on for a Confirmation, in
     order (e.g. "send_email"); the harness approves each one unchanged.
+    `technique`: the Retrieval Technique (by name, e.g. "hybrid_search") the Knowledge
+    Agent should find the answer with. A soft check: a mismatch is logged, never fails.
     """
 
     id: str
@@ -31,6 +33,7 @@ class EvalTurn:
     citations: tuple[str, ...] = ()
     facts: tuple[str, ...] = ()
     write_actions: tuple[str, ...] = ()
+    technique: str | None = None
 
 
 class Driver(Protocol):
@@ -52,6 +55,7 @@ class Result:
     consulted: list[str] = field(default_factory=list)
     missing_citations: list[str] = field(default_factory=list)
     confirmations: list[str] = field(default_factory=list)  # Write Actions paused on, in order
+    techniques: list[str] = field(default_factory=list)  # from the "Found with" line, by name
     error: str | None = None
     quality: float | None = None  # 0..1 from the judge; None if it gave no usable score
     judge_comment: str = ""
@@ -70,6 +74,14 @@ class Result:
         return self.error is None and self.confirmations == list(self.turn.write_actions)
 
     @property
+    def technique_ok(self) -> bool | None:
+        """Whether the expected Retrieval Technique found the answer; None if the Turn
+        expects none. A soft check: it never counts toward `passed`."""
+        if self.turn.technique is None:
+            return None
+        return self.error is None and self.turn.technique in self.techniques
+
+    @property
     def passed(self) -> bool:
         """Only the hard checks count. The judge's score never fails a Turn."""
         return self.routing_ok and self.citations_ok and self.confirmations_ok
@@ -86,6 +98,7 @@ def run_eval_turn(turn: EvalTurn, driver: Driver) -> Result:
             outcome = driver.resume(Approve())
         result.reply = outcome
         result.consulted = [agent_name(tool) for tool in driver.consulted()]
+        result.techniques = techniques_used(result.reply)
     except Exception as error:  # noqa: BLE001 - a crashed Turn is a failed Turn, not a crashed run
         result.error = f"{type(error).__name__}: {error}"
         return result
@@ -94,10 +107,37 @@ def run_eval_turn(turn: EvalTurn, driver: Driver) -> Result:
     return result
 
 
+def feedback(result: Result) -> dict[str, tuple[float, str | None]]:
+    """The Turn's scores as LangSmith feedback: key -> (score 0..1, comment). Checks
+    that don't apply (no judge score, no expected technique) are left out."""
+    scores = {
+        "routing": (float(result.routing_ok), None),
+        "citations": (float(result.citations_ok), None),
+        "confirmations": (float(result.confirmations_ok), None),
+    }
+    if result.quality is not None:
+        scores["quality"] = (result.quality, result.judge_comment)
+    if result.technique_ok is not None:
+        used = ", ".join(result.techniques) or "no technique"
+        comment = f"expected {result.turn.technique}, found with {used}"
+        scores["technique"] = (float(result.technique_ok), comment)
+    return scores
+
+
 def agent_name(tool: str) -> str:
     """`ask_knowledge_agent` -> `knowledge`."""
     match = re.fullmatch(r"ask_(\w+)_agent", tool)
     return match.group(1) if match else tool
+
+
+def techniques_used(reply: str) -> list[str]:
+    """The Retrieval Techniques, by name, that the reply's "Found with" line names."""
+    labels = {t.label: t.name for t in techniques.TECHNIQUES}
+    match = re.search(r"^Found with: (.+)$", reply, re.MULTILINE)
+    if not match:
+        return []
+    used = (re.sub(r"\s*\([^()]*\)$", "", part.strip()) for part in match.group(1).split(";"))
+    return [labels.get(label, label) for label in used]
 
 
 def cites(reply: str, citation: str) -> bool:

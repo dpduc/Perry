@@ -139,9 +139,16 @@ Push to talk uses the chat model for transcription and `PERRY_TTS_MODEL` for spe
 uv run python -m evals --list            # the eval Turns
 uv run python -m evals                   # run them all against the real model
 uv run python -m evals knowledge-aphids  # only Turns whose id starts with this
+uv run python -m evals --tune-margin     # tune the cascade margin (embeddings only)
 ```
 
 Each eval Turn ([evals/turns/](evals/turns/), one file per Agent) says which Agents must be consulted, which Citations the answer must contain and which Write Actions must wait for a Confirmation (the run approves them, against the fake); those checks pass or fail the run. An LLM judge also scores answer quality, which is only reported (and logged to the LangSmith project `perry-eval` when tracing is on). The run uses its own `perry_eval` database loaded from [evals/documents/](evals/documents/) and [evals/datasets/](evals/datasets/) (the `analysis-python-*` Turns run Python in the Sandbox, so they need Docker), and a fake calendar and mailbox ([evals/workspace.py](evals/workspace.py)) instead of Google. It isn't part of `uv run pytest` or the pre-commit hook, because it spends real requests: with pacing, a full run takes about 15 minutes on the free tier.
+
+Knowledge Turns can also name the Retrieval Technique expected to find the answer ([evals/turns/techniques.py](evals/turns/techniques.py) has at least two per technique). That check is soft: a mismatch is printed and logged to LangSmith as `technique` feedback, but never fails the run. The run forces the "Found with" line on, since that is where it reads the technique from.
+
+**Tuning the cascade margin.** `--tune-margin` embeds every eval Turn that expects a technique (embedding calls only, a fraction of a cent) and measures how much nearer semantic picking's top technique is than the runner-up, and whether the top one is the expected one. The tuned margin is the smallest that sits above every wrong pick's gap (midway to the next right one): every question cascade settles semantically on the eval Turns was picked right, and the rest go to logical picking, which is assumed right there (measuring it needs chat calls; the full eval run's soft check does that). Record the printed value as `DEFAULT_CASCADE_MARGIN` in [perry/picking.py](perry/picking.py) and in the settings table. Rerun it after changing technique example questions, technique eval Turns or the embedding model. Eval questions must never be benchmark questions or router example questions (a test checks), or the tuning grades its own answer key.
+
+The current `0.074` comes from a run on 2026-10-09 with `gemini-embedding-001`: semantic picking alone was right on 11 of 22 Turns, and the most confident wrong pick (a comparison question sent to hybrid search, gap 0.071) sets the margin, so only 2 of 22 Turns were settled semantically. Better example questions would let cascade skip more model calls.
 
 ## Connecting Google (Task Agent)
 
@@ -185,7 +192,7 @@ All optional; add any of these to `.env` to override the default.
 | `PERRY_COLBERT_MODEL` | `answerdotai/answerai-colbert-small-v1` | Local model for the ColBERT Retrieval Technique (downloaded on first use, runs on the CPU); changing it re-encodes every Chunk at next start; empty turns ColBERT off |
 | `PERRY_SHOW_FOUND_WITH` | `true` | End answers from your Documents with the "Found with" line naming the Retrieval Technique; `false` turns it off |
 | `PERRY_PICKING_MODE` | `cascade` | How the Knowledge Agent picks a Retrieval Technique: `semantic` (nearest example questions), `logical` (the model chooses from the descriptions) or `cascade` (semantic when clearly closest, else logical). The sidebar's forced technique wins over all of them |
-| `PERRY_CASCADE_MARGIN` | `0.05` | How much nearer (cosine similarity) the closest technique's examples must be than the runner-up's for `cascade` to pick semantically; tune on the eval set, never the benchmark |
+| `PERRY_CASCADE_MARGIN` | `0.074` | How much nearer (cosine similarity) the closest technique's examples must be than the runner-up's for `cascade` to pick semantically; tuned on the eval set, never the benchmark (see [Eval set](#eval-set)) |
 | `PERRY_PRICES_FILE` | `prices.toml` | Price table, USD per million tokens per model |
 | `PERRY_ANALYST_PASSWORD` | `perry_analyst` | Password of the read-only `perry_analyst` role |
 | `PERRY_ANALYSIS_TIMEOUT_MS` | `10000` | Statement timeout for the Analysis Agent's SQL |

@@ -3,9 +3,11 @@
 The eval itself runs on demand against the real model: `uv run python -m evals`.
 """
 
+from dataclasses import replace
+
 from fakes import call, last_message
 
-from evals.harness import EvalTurn, cites, run_eval_turn
+from evals.harness import EvalTurn, cites, feedback, run_eval_turn
 
 BUDGET_TURN = EvalTurn(
     id="q3-budget",
@@ -233,6 +235,91 @@ def test_analysis_sql_turns_run_against_the_eval_datasets(perry):
 
     assert result.passed
     assert "North | 181300" in result.reply and "West | 220850" in result.reply
+
+
+BUDGET_BY_DECOMPOSITION = EvalTurn(
+    id="q3-budget-decomposed",
+    message="How big is my Q3 marketing budget?",
+    agents=("knowledge",),
+    citations=("budget.md",),
+    technique="question_decomposition",
+)
+
+
+def test_turn_found_with_the_expected_technique_matches_the_soft_check(perry):
+    perry.add_document("budget.md", "The marketing budget for Q3 is 40,000 dollars.")
+    turn = replace(BUDGET_TURN, technique="hybrid_search")
+    ask_knowledge_agent_and_echo(perry)
+    perry.script('{"score": 5, "comment": "Correct."}')
+
+    result = run_eval_turn(turn, perry)
+
+    assert result.techniques == ["hybrid_search"]
+    assert result.technique_ok is True
+    assert result.passed
+
+
+def test_technique_mismatch_is_reported_but_never_fails_the_turn(perry):
+    perry.add_document("budget.md", "The marketing budget for Q3 is 40,000 dollars.")
+    ask_knowledge_agent_and_echo(perry)  # found with hybrid search
+    perry.script('{"score": 5, "comment": "Correct."}')
+
+    result = run_eval_turn(BUDGET_BY_DECOMPOSITION, perry)
+
+    assert result.techniques == ["hybrid_search"]
+    assert result.technique_ok is False
+    assert result.passed
+
+
+def test_turn_without_an_expected_technique_has_no_technique_check(perry):
+    perry.add_document("budget.md", "The marketing budget for Q3 is 40,000 dollars.")
+    ask_knowledge_agent_and_echo(perry)
+    perry.script('{"score": 5, "comment": "Correct."}')
+
+    result = run_eval_turn(BUDGET_TURN, perry)
+
+    assert result.technique_ok is None
+    assert "technique" not in feedback(result)
+
+
+def test_technique_mismatch_is_logged_as_feedback_with_the_technique_used(perry):
+    perry.add_document("budget.md", "The marketing budget for Q3 is 40,000 dollars.")
+    ask_knowledge_agent_and_echo(perry)
+    perry.script('{"score": 5, "comment": "Correct."}')
+
+    result = run_eval_turn(BUDGET_BY_DECOMPOSITION, perry)
+    scores = feedback(result)
+
+    assert scores["technique"] == (
+        0.0,
+        "expected question_decomposition, found with hybrid_search",
+    )
+    assert scores["routing"] == (1.0, None)
+    assert scores["quality"] == (1.0, "Correct.")
+
+
+def test_eval_turns_expect_every_retrieval_technique_by_its_registered_name():
+    from evals.turns import all_turns
+    from perry.techniques import TECHNIQUES
+
+    expected = [t.technique for t in all_turns() if t.technique]
+
+    assert set(expected) == {t.name for t in TECHNIQUES}
+
+
+def test_eval_turns_are_neither_benchmark_questions_nor_router_examples():
+    """The cascade margin is tuned on the eval Turns: reusing the benchmark would grade
+    the benchmark on its own answer key, and reusing router examples would make the
+    tuning trivially optimistic."""
+    from benchmark.run import QUESTIONS_PATH
+    from benchmark.scoring import _question_key, load_questions
+    from evals.turns import all_turns
+    from perry.techniques import TECHNIQUES
+
+    taken = {_question_key(q.question) for q in load_questions(QUESTIONS_PATH)}
+    taken |= {_question_key(e) for t in TECHNIQUES for e in t.examples}
+
+    assert [t.id for t in all_turns() if _question_key(t.message) in taken] == []
 
 
 def test_analysis_sandbox_turns_read_the_eval_datasets(perry, monkeypatch, tmp_path):

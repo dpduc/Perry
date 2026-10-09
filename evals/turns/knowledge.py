@@ -9,6 +9,7 @@ TURNS = [
         agents=("knowledge",),
         citations=("q3-budget.md",),
         facts=("The Q3 marketing budget is 40,000 dollars.",),
+        technique="hybrid_search",
     ),
     EvalTurn(
         id="knowledge-trade-fair",
@@ -61,6 +62,7 @@ TURNS = [
             "The trade fair is September 14-16 and the offsite October 21-22.",
             "So the trade fair comes first.",
         ),
+        technique="question_decomposition",
     ),
     # Not in the Documents: Perry must say so instead of answering from general knowledge.
     EvalTurn(
