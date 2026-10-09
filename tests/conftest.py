@@ -17,6 +17,9 @@ os.environ["DATABASE_URL"] = TEST_URL
 os.environ["LANGCHAIN_TRACING_V2"] = "false"
 os.environ["LANGSMITH_TRACING"] = "false"
 os.environ["PERRY_RETRY_DELAY_SECONDS"] = "0"
+# Turns script which technique tool the Knowledge Agent calls, so by default its model
+# picks (logically). Tests of semantic and cascade picking set the mode themselves.
+os.environ["PERRY_PICKING_MODE"] = "logical"
 
 from fakes import ScriptedChatModel, fake_embed, fake_provider
 

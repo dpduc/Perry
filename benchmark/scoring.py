@@ -61,6 +61,23 @@ def _normalise(text: str) -> str:
     return " ".join(text.split())
 
 
+def leaked_examples(techniques, questions: list[Question]) -> list[tuple[str, str]]:
+    """(technique name, example) for every Retrieval Technique example question that is
+    also a benchmark question, ignoring case, punctuation and spacing. Semantic picking
+    must not be tuned on the benchmark that grades it."""
+    asked = {_question_key(q.question) for q in questions}
+    return [
+        (technique.name, example)
+        for technique in techniques
+        for example in technique.examples
+        if _question_key(example) in asked
+    ]
+
+
+def _question_key(text: str) -> str:
+    return " ".join(re.sub(r"[^\w\s]", " ", text.lower()).split())
+
+
 def extract_citations(answer: str) -> tuple[str, ...]:
     return tuple(sorted(set(CITATION.findall(answer))))
 

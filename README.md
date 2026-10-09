@@ -69,7 +69,7 @@ The repo ships small sample files you can use to try everything: [evals/document
 3. Ask, for example: *What's my Q3 marketing budget?* With the sample files you should get 40,000 dollars, with a Citation to `q3-budget.md`.
 4. Ask something that isn't in your files, such as *What's my Q4 budget?* Perry should say it can't find it rather than guess.
 5. Questions that need two files work too: *How does the offsite compare with the trade fair?*
-6. Each answer ends with its Citations, then a line such as `Found with: Hybrid search (picked logically)` naming the Retrieval Technique that found them. To try a specific technique, pick it in the sidebar's **Retrieval Technique** dropdown (Auto by default); it is used for your next questions, reported as `(forced)`, until you set it back to Auto. Perry still decides on its own whether a question needs your Documents at all.
+6. Each answer ends with its Citations, then a line such as `Found with: Hybrid search (picked logically)` naming the Retrieval Technique that found them and how it was picked: `semantically` when the question was clearly closest to that technique's example questions (no extra model call), `logically` when the model chose from the techniques' descriptions. To try a specific technique, pick it in the sidebar's **Retrieval Technique** dropdown (Auto by default); it is used for your next questions, reported as `(forced)`, until you set it back to Auto. Perry still decides on its own whether a question needs your Documents at all.
 
 ### 2. Replace or update a Document
 
@@ -180,6 +180,8 @@ All optional; add any of these to `.env` to override the default.
 | `PERRY_TURN_TOKEN_CEILING` | `50000` | A Turn stops and reports its findings past this many tokens |
 | `PERRY_DAILY_CAP_USD` | `1.00` | New Turns and ingestion are refused past this until local midnight |
 | `PERRY_SHOW_FOUND_WITH` | `true` | End answers from your Documents with the "Found with" line naming the Retrieval Technique; `false` turns it off |
+| `PERRY_PICKING_MODE` | `cascade` | How the Knowledge Agent picks a Retrieval Technique: `semantic` (nearest example questions), `logical` (the model chooses from the descriptions) or `cascade` (semantic when clearly closest, else logical). The sidebar's forced technique wins over all of them |
+| `PERRY_CASCADE_MARGIN` | `0.05` | How much nearer (cosine similarity) the closest technique's examples must be than the runner-up's for `cascade` to pick semantically; tune on the eval set, never the benchmark |
 | `PERRY_PRICES_FILE` | `prices.toml` | Price table, USD per million tokens per model |
 | `PERRY_ANALYST_PASSWORD` | `perry_analyst` | Password of the read-only `perry_analyst` role |
 | `PERRY_ANALYSIS_TIMEOUT_MS` | `10000` | Statement timeout for the Analysis Agent's SQL |

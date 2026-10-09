@@ -6,7 +6,12 @@ import pymupdf
 
 from benchmark.corpus import DOCUMENTS_DIR
 from benchmark.run import QUESTIONS_PATH
-from benchmark.scoring import QUESTION_TYPES, _normalise, load_questions
+from benchmark.scoring import (
+    QUESTION_TYPES,
+    _normalise,
+    leaked_examples,
+    load_questions,
+)
 
 QUESTIONS = load_questions(QUESTIONS_PATH)
 
@@ -65,3 +70,25 @@ def test_multi_hop_questions_need_more_than_one_document():
         if q.type == "multi_hop":
             documents = {page.split("#")[0] for page in q.pages}
             assert len(documents) >= 2, q.id
+
+
+def test_no_technique_example_question_is_a_benchmark_question():
+    from perry.techniques import TECHNIQUES
+
+    assert leaked_examples(TECHNIQUES, QUESTIONS) == []
+
+
+def test_an_example_question_copied_from_the_benchmark_is_caught():
+    from perry.techniques import Technique, hybrid
+
+    copied = Technique(
+        name="copycat",
+        label="Copycat",
+        description="Copies the benchmark.",
+        examples=("Is this original?", "  what was HALDEN robotics' total revenue in 2025 "),
+        chain=hybrid,
+    )
+
+    assert leaked_examples([copied], QUESTIONS) == [
+        ("copycat", "  what was HALDEN robotics' total revenue in 2025 ")
+    ]
