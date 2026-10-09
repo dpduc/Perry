@@ -167,7 +167,7 @@ def test_chained_turn_pauses_at_the_write_action_in_the_middle(perry, workspace)
 
     perry.script(
         call("ask_knowledge_agent", question="What do the Q3 notes say?"),  # Supervisor
-        call("search_documents", query="Q3 notes"),  # Knowledge Agent
+        call("hybrid_search", question="Q3 notes"),  # Knowledge Agent
         last_message,  # Knowledge Agent reports
         email_the_summary,  # Supervisor chains to the Task Agent
         call(
@@ -190,7 +190,10 @@ def test_chained_turn_pauses_at_the_write_action_in_the_middle(perry, workspace)
 
     assert [e.subject for e in workspace.sent] == ["Q3 summary"]
     assert perry.consulted() == ["ask_knowledge_agent", "ask_task_agent"]
-    assert reply == "Done: I emailed Sam the Q3 summary.\n\nCitations: [q3-notes.md]"
+    assert reply == (
+        "Done: I emailed Sam the Q3 summary.\n\nCitations: [q3-notes.md]\n"
+        "Found with: Hybrid search (picked logically)"
+    )
     assert perry.history()[-1] == {"role": "assistant", "content": reply}
 
 

@@ -12,6 +12,7 @@ from perry import (
     ingest,
     models,
     privacy,
+    techniques,
     threads,
     usage,
     voice,
@@ -56,18 +57,31 @@ def show_user_message(message: dict, history: list[dict]):
     return {"text": text, "files": images}, [*history, *shown], EMPTY
 
 
+AUTO = "auto"  # the dropdown's default: the Knowledge Agent picks the Retrieval Technique
+
+
+def technique_choices() -> list[tuple[str, str]]:
+    """The Retrieval Technique dropdown: Auto, then every registered technique."""
+    return [("Auto", AUTO), *((t.label, t.name) for t in techniques.TECHNIQUES)]
+
+
 def answer(
-    message: dict, history: list[dict], thread_id: str | None, voice_turn: str | None = None
+    message: dict,
+    history: list[dict],
+    thread_id: str | None,
+    technique: str = AUTO,
+    voice_turn: str | None = None,
 ):
-    """Run the Turn (`voice_turn` when the request came by voice). Outputs: chat,
-    Thread, Thread picker, then `show()`'s card outputs."""
+    """Run the Turn (`voice_turn` when the request came by voice), forcing `technique`
+    unless it is Auto. Outputs: chat, Thread, Thread picker, then `show()`'s card outputs."""
     text, images = message.get("text", ""), message.get("files", [])
     if not text.strip() and not images:
         return history, thread_id, gr.skip(), *[gr.skip() for _ in confirmation_card(None)]
     if thread_id is None:
         thread_id = threads.create(text)
     # A pending Confirmation is cancelled by this message; the reply says so.
-    outcome = run_turn(thread_id, text, images=images, turn_id=voice_turn)
+    forced = None if technique in (None, AUTO) else technique
+    outcome = run_turn(thread_id, text, images=images, turn_id=voice_turn, technique=forced)
     history, *card = show(outcome, history)
     picker = gr.update(choices=threads.list_recent(), value=thread_id)
     return history, thread_id, picker, *card
@@ -294,6 +308,12 @@ def build(privacy_notice: str = "") -> gr.Blocks:
                 choices=threads.list_recent(), label="Threads", value=None
             )
             gr.Markdown("### Documents")
+            technique = gr.Dropdown(
+                choices=technique_choices(),
+                value=AUTO,
+                label="Retrieval Technique",
+                info="Auto lets Perry pick; choose one to force it for the next questions.",
+            )
             uploader = gr.File(
                 file_count="multiple", file_types=[".pdf", ".md", ".txt"], label="Upload"
             )
@@ -364,13 +384,13 @@ def build(privacy_notice: str = "") -> gr.Blocks:
         during_turn(
             box.submit(lock_threads, None, switching)
             .then(show_user_message, [box, chatbot], [pending, chatbot, box])
-            .then(answer, [pending, chatbot, thread_id], answer_outputs)
+            .then(answer, [pending, chatbot, thread_id, technique], answer_outputs)
         )
         box.submit(lambda: None, None, voice_turn)
         during_turn(
             mic.stop_recording(lock_threads, None, switching)
             .then(hear, [mic, chatbot, thread_id], [pending, chatbot, mic, voice_turn])
-            .then(answer, [pending, chatbot, thread_id, voice_turn], answer_outputs)
+            .then(answer, [pending, chatbot, thread_id, technique, voice_turn], answer_outputs)
             .then(read_aloud, [voice_turn, chatbot, thread_id], speaker)
         )
         during_turn(

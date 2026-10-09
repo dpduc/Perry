@@ -31,14 +31,17 @@ def test_turn_that_crosses_the_daily_cap_midway_finishes(perry, cap):
     perry.add_document("budget.md", "The marketing budget for Q3 is 40,000 dollars.")
     perry.script(
         with_usage(call("ask_knowledge_agent", question="Q3 budget?"), 6_000),  # Supervisor
-        with_usage(call("search_documents", query="Q3 budget"), 6_000),  # cap crossed here
+        with_usage(call("hybrid_search", question="Q3 budget"), 6_000),  # cap crossed here
         with_usage("The Q3 marketing budget is 40,000 dollars [budget.md].", 6_000),
         with_usage(last_message, 6_000),
     )
 
     reply = perry.send("How big is my Q3 marketing budget?")
 
-    assert reply == "The Q3 marketing budget is 40,000 dollars.\n\nCitations: [budget.md]"
+    assert reply == (
+        "The Q3 marketing budget is 40,000 dollars.\n\nCitations: [budget.md]\n"
+        "Found with: Hybrid search (picked logically)"
+    )
     assert perry.send("And for Q4?").startswith("Perry has used today's budget of $0.01")
 
 

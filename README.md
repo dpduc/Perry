@@ -8,7 +8,7 @@ A personal multi-agent assistant that runs on your own machine. You talk to one 
 
 | Agent | What it does for you |
 |---|---|
-| **Knowledge Agent** | Answers questions from the Documents you upload (PDF, Markdown, text) and cites the exact page each claim came from. Uses hybrid search (pgvector + Postgres full-text). Scanned PDF pages with no text are read by the vision model at upload. |
+| **Knowledge Agent** | Answers questions from the Documents you upload (PDF, Markdown, text) and cites the exact page each claim came from. Picks a Retrieval Technique per question (today: hybrid search, pgvector + Postgres full-text) and says which one it used. Scanned PDF pages with no text are read by the vision model at upload. |
 | **Analysis Agent** | Answers questions about your Datasets (CSV, or each sheet of an XLSX). It writes read-only SQL and shows you the query it ran. When SQL isn't enough (statistics, forecasts, charts) it writes Python that runs in a locked-down Docker **Sandbox**, and the charts appear in the chat. |
 | **Task Agent** | Reads your Google Calendar and Gmail freely. Anything that changes something or reaches another person (send, reply, create, move or delete an event) waits for you on a **Confirmation card**, where you approve, edit the fields, or reject with a note. |
 
@@ -69,6 +69,7 @@ The repo ships small sample files you can use to try everything: [evals/document
 3. Ask, for example: *What's my Q3 marketing budget?* With the sample files you should get 40,000 dollars, with a Citation to `q3-budget.md`.
 4. Ask something that isn't in your files, such as *What's my Q4 budget?* Perry should say it can't find it rather than guess.
 5. Questions that need two files work too: *How does the offsite compare with the trade fair?*
+6. Each answer ends with its Citations, then a line such as `Found with: Hybrid search (picked logically)` naming the Retrieval Technique that found them. To try a specific technique, pick it in the sidebar's **Retrieval Technique** dropdown (Auto by default); it is used for your next questions, reported as `(forced)`, until you set it back to Auto. Perry still decides on its own whether a question needs your Documents at all.
 
 ### 2. Replace or update a Document
 
@@ -178,6 +179,7 @@ All optional; add any of these to `.env` to override the default.
 | `PERRY_RETRY_DELAY_SECONDS` | `2` | Wait before a failed step's one retry |
 | `PERRY_TURN_TOKEN_CEILING` | `50000` | A Turn stops and reports its findings past this many tokens |
 | `PERRY_DAILY_CAP_USD` | `1.00` | New Turns and ingestion are refused past this until local midnight |
+| `PERRY_SHOW_FOUND_WITH` | `true` | End answers from your Documents with the "Found with" line naming the Retrieval Technique; `false` turns it off |
 | `PERRY_PRICES_FILE` | `prices.toml` | Price table, USD per million tokens per model |
 | `PERRY_ANALYST_PASSWORD` | `perry_analyst` | Password of the read-only `perry_analyst` role |
 | `PERRY_ANALYSIS_TIMEOUT_MS` | `10000` | Statement timeout for the Analysis Agent's SQL |

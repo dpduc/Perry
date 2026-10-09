@@ -9,7 +9,7 @@ def ask_about_budget(perry, *, tokens: list[tuple[int, int]]) -> str:
     tokens, and one embedding of the search query."""
     perry.script(
         with_usage(call("ask_knowledge_agent", question="Q3 budget?"), *tokens[0]),
-        with_usage(call("search_documents", query="Q3 budget"), *tokens[1]),
+        with_usage(call("hybrid_search", question="Q3 budget"), *tokens[1]),
         with_usage(last_message, *tokens[2]),
         with_usage(last_message, *tokens[3]),
     )
@@ -49,7 +49,7 @@ def test_turn_that_hits_the_token_ceiling_stops_and_reports_what_it_found(perry,
     perry.add_document("budget.md", "The marketing budget for Q3 is 40,000 dollars.")
     perry.script(
         with_usage(call("ask_knowledge_agent", question="Q3 budget?"), 400),  # Supervisor
-        with_usage(call("search_documents", query="Q3 budget"), 300),  # Knowledge Agent
+        with_usage(call("hybrid_search", question="Q3 budget"), 300),  # Knowledge Agent
         with_usage("The Q3 marketing budget is 40,000 dollars [budget.md].", 300),
         # The Supervisor's next call would go over the ceiling, so it never happens.
     )
@@ -72,7 +72,7 @@ def test_token_ceiling_counts_only_the_current_turn_and_can_stop_inside_an_agent
     perry.send("Hello")  # 900 tokens: under the ceiling, and they don't carry over
     perry.script(
         with_usage(call("ask_knowledge_agent", question="Q3 budget?"), 600),  # Supervisor
-        with_usage(call("search_documents", query="Q3 budget"), 500),  # Knowledge Agent
+        with_usage(call("hybrid_search", question="Q3 budget"), 500),  # Knowledge Agent
         # The Knowledge Agent's next call would go over the ceiling, so it never happens.
     )
 
@@ -88,3 +88,20 @@ def test_token_ceiling_counts_only_the_current_turn_and_can_stop_inside_an_agent
         {"role": "user", "content": "How big is my Q3 marketing budget?"},
         {"role": "assistant", "content": reply},
     ]
+
+
+def test_a_techniques_model_calls_are_recorded_with_their_kind_and_count_toward_the_ceiling(
+    perry, monkeypatch
+):
+    from perry import models, usage
+
+    monkeypatch.setenv("PERRY_TURN_TOKEN_CEILING", "1000")
+    perry.script(with_usage("three rewrites", 600, 500), "never reached")
+
+    with usage.turn(None) as turn:
+        models.chat_model(kind="rewrite").invoke("Rewrite: Q3 budget?")
+        with pytest.raises(usage.TurnTokenCeilingReached):
+            models.chat_model(kind="rewrite").invoke("Rewrite: Q3 budget again?")
+
+    assert usage.today("rewrite").tokens == 1100
+    assert usage.turn_tokens(turn.id) == 1100

@@ -4,16 +4,20 @@ Interface (keep it retrieval-method agnostic, see docs/adr/0001): question in,
 cited findings out.
 """
 
+import os
 import re
+from dataclasses import dataclass
 
 from langchain.agents import create_agent
-from langchain_core.tools import tool
+from langchain_core.tools import BaseTool, StructuredTool
 
-from perry import models, retries
-from perry.search import hybrid_search
+from perry import models, retries, techniques
+from perry.techniques import Technique
 
 SYSTEM_PROMPT = """You are Perry's Knowledge Agent. You answer questions using ONLY \
-passages from the user's Documents, found with the search_documents tool.
+passages from the user's Documents, found with your search tools. Each tool is a \
+different way of searching (a Retrieval Technique); pick the one whose description \
+best fits the question.
 
 - Search before answering. If the first search misses, rephrase and search again \
 (at most 3 searches).
@@ -23,31 +27,82 @@ e.g. [report.pdf#page=4].
 contain it. Never fill gaps from general knowledge.
 - Be concise: report the findings, not a polished essay."""
 
-
-@tool
-def search_documents(query: str) -> str:
-    """Search the user's Documents. Returns the most relevant passages with their citations."""
-    hits = hybrid_search(query)
-    if not hits:
-        return "No passages found. The user has not uploaded any Documents yet."
-    return "\n\n".join(f"[{hit.citation}]\n{hit.text}" for hit in hits)
+# How a technique was chosen, as the "Found with" line says it.
+PICKED_LOGICALLY = "picked logically"  # the Knowledge Agent's model chose it
+FORCED = "forced"  # the per-request override named it
 
 
-def knowledge_agent():
+def technique_tool(technique: Technique) -> BaseTool:
+    """`technique` as a tool the Knowledge Agent can call, described for picking."""
+
+    def search(question: str) -> str:
+        hits = technique.chain.invoke(question)
+        if not hits:
+            return "No passages found. The user has not uploaded any Documents yet."
+        return "\n\n".join(f"[{hit.citation}]\n{hit.text}" for hit in hits)
+
+    return StructuredTool.from_function(
+        search, name=technique.name, description=technique.description
+    )
+
+
+def knowledge_agent(tools: list[BaseTool]):
     # Built per call (cheap) so it always uses the current model provider.
     return create_agent(
         models.chat_model(),
-        tools=[search_documents],
+        tools=tools,
         middleware=[retries.RetryFailedSteps()],
         system_prompt=SYSTEM_PROMPT,
         name="knowledge_agent",
     )
 
 
-def ask(question: str) -> str:
-    result = knowledge_agent().invoke({"messages": [{"role": "user", "content": question}]})
-    return result["messages"][-1].text
+@dataclass(frozen=True)
+class Findings:
+    """The Knowledge Agent's cited findings, and which Retrieval Techniques found them,
+    each as the "Found with" line names it, e.g. "Hybrid search (picked logically)"."""
 
+    text: str
+    found_with: tuple[str, ...] = ()
+
+
+def find(question: str, forced: str | None = None) -> Findings:
+    """Answer `question` from the Documents. `forced` names the one Retrieval Technique
+    to use (the per-request override); by default the Knowledge Agent picks."""
+    offered = [techniques.get(forced)] if forced else list(techniques.TECHNIQUES)
+    agent = knowledge_agent([technique_tool(t) for t in offered])
+    result = agent.invoke({"messages": [{"role": "user", "content": question}]})
+    used = dict.fromkeys(m.name for m in result["messages"] if m.type == "tool")
+    how = FORCED if forced else PICKED_LOGICALLY
+    found_with = tuple(f"{t.label} ({how})" for t in offered if t.name in used)
+    return Findings(result["messages"][-1].text, found_with)
+
+
+def ask(question: str, forced: str | None = None) -> str:
+    """The findings for `question` as an answer: text, then the "Found with" line."""
+    findings = find(question, forced)
+    return with_found_with(findings.text, findings.found_with)
+
+
+def found_with_shown() -> bool:
+    """Whether answers end with the "Found with" line (PERRY_SHOW_FOUND_WITH, default on)."""
+    setting = os.getenv("PERRY_SHOW_FOUND_WITH", "true").strip().lower()
+    return setting not in {"0", "false", "no", "off"}
+
+
+def with_found_with(answer: str, found_with: list[str] | tuple[str, ...]) -> str:
+    """`answer` ending with the line naming the Retrieval Techniques that found it, unless
+    none did or the setting turns the line off. Added in code, like the Citations."""
+    found_with = list(dict.fromkeys(found_with))
+    if not found_with or not found_with_shown():
+        return answer
+    # Straight under the Citations line, if there is one: together they end the answer.
+    last_line = answer.rsplit("\n", 1)[-1]
+    gap = "\n" if last_line.startswith(CITATIONS) else "\n\n"
+    return f"{answer}{gap}Found with: {'; '.join(found_with)}"
+
+
+CITATIONS = "Citations: "
 
 # A Citation as the findings give it, e.g. [report.pdf#page=4].
 _CITATION = re.compile(r"\[[^\[\]\n]+\]")

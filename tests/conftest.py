@@ -89,14 +89,17 @@ class Perry:
         path.write_text(text, encoding="utf-8")
         ingest_file(path, embed=fake_embed)
 
-    def send(self, message: str, images=()) -> str:
+    def send(self, message: str, images=(), technique: str | None = None) -> str:
         """Run one Turn and return the reply the user sees. `images` are image files
-        attached to the message, as when dropped into the chat."""
+        attached to the message, as when dropped into the chat; `technique` forces a
+        Retrieval Technique, as the sidebar dropdown does."""
         from perry import supervisor, threads
 
         if self.thread_id is None:
             self.thread_id = threads.create(message)
-        return supervisor.run_turn(self.thread_id, message, images=list(images))
+        return supervisor.run_turn(
+            self.thread_id, message, images=list(images), technique=technique
+        )
 
     def resume(self, decision):
         """Answer the pending Confirmation (approve, approve with edits, or reject with a

@@ -235,12 +235,18 @@ def text_generation_is_local() -> bool:
     return _provider().local_text_generation
 
 
-def chat_model() -> BaseChatModel:
+def chat_model(kind: str = "chat") -> BaseChatModel:
+    """The chat model. `kind` is what its calls are for in the usage ledger: "chat" for
+    an Agent's own reasoning, or e.g. "rewrite" or "pick" for a Retrieval Technique's
+    calls (a call given an image is "vision" whatever the kind)."""
     model = _provider().chat_model()
     callbacks = model.callbacks or []
     if not any(isinstance(handler, _UsageRecorder) for handler in callbacks):
         model.callbacks = [*callbacks, _UsageRecorder()]
-    return model
+    if kind == "chat":
+        return model
+    # Bound, not set on the model: a provider may hand every caller the same instance.
+    return model.with_config(metadata={_USAGE_KIND: kind})
 
 
 def embedding_model() -> str:
@@ -338,6 +344,10 @@ def _model_name(name: str) -> str:
     return name.removeprefix("models/")
 
 
+# Run metadata naming the usage ledger kind of a chat call, set by `chat_model(kind)`.
+_USAGE_KIND = "perry_usage_kind"
+
+
 class _UsageRecorder(BaseCallbackHandler):
     """Records each chat call in the usage ledger; stops calls past the Turn's ceiling."""
 
@@ -354,7 +364,9 @@ class _UsageRecorder(BaseCallbackHandler):
         # Fallback name for the ledger if the response doesn't name its model (fakes don't).
         model = params.get("model") or params.get("model_name") or params.get("_type", "unknown")
         # A call given an image (e.g. one still in the Thread) pays for it again: "vision".
-        kind = "vision" if any(images.has_images(m) for m in messages) else "chat"
+        kind = (kwargs.get("metadata") or {}).get(_USAGE_KIND, "chat")
+        if any(images.has_images(m) for m in messages):
+            kind = "vision"
         self._models[run_id] = (model, kind)
 
     def on_llm_end(self, response, *, run_id, **kwargs) -> None:

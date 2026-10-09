@@ -19,7 +19,7 @@ BUDGET_TURN = EvalTurn(
 def ask_knowledge_agent_and_echo(perry):
     perry.script(
         call("ask_knowledge_agent", question="What is the Q3 marketing budget?"),  # Supervisor
-        call("search_documents", query="Q3 marketing budget"),  # Knowledge Agent
+        call("hybrid_search", question="Q3 marketing budget"),  # Knowledge Agent
         last_message,  # Knowledge Agent reports the passages it found
         last_message,  # Supervisor passes the findings on
     )
@@ -51,7 +51,7 @@ def test_agent_consulted_when_none_was_expected_fails_routing(perry):
     small_talk = EvalTurn(id="hello", message="Hello there", agents=())
     perry.script(
         call("ask_knowledge_agent", question="Hello"),
-        call("search_documents", query="Hello"),
+        call("hybrid_search", question="Hello"),
         "The Documents don't mention that.",
         "Hi! How can I help?",
         '{"score": 5, "comment": "Friendly."}',
@@ -67,7 +67,7 @@ def test_reply_without_the_required_citation_fails_the_citation_check(perry):
     perry.add_document("budget.md", "The marketing budget for Q3 is 40,000 dollars.")
     perry.script(
         call("ask_knowledge_agent", question="What is the Q3 marketing budget?"),
-        call("search_documents", query="Q3 marketing budget"),
+        call("hybrid_search", question="Q3 marketing budget"),
         "The Q3 marketing budget is 40,000 dollars.",  # the Knowledge Agent drops the Citation
         "Your Q3 marketing budget is 40,000 dollars.",
         '{"score": 5, "comment": "Correct."}',

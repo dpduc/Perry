@@ -14,7 +14,7 @@ def test_step_that_fails_once_then_succeeds_gives_a_normal_answer(perry):
     perry.script(
         call("ask_knowledge_agent", question="What is the Q3 marketing budget?"),  # Supervisor
         rate_limited(),  # Knowledge Agent's first attempt fails
-        call("search_documents", query="Q3 marketing budget"),  # retry
+        call("hybrid_search", question="Q3 marketing budget"),  # retry
         last_message,  # Knowledge Agent reports the passages it found
         last_message,  # Supervisor passes the findings on
     )
@@ -22,7 +22,9 @@ def test_step_that_fails_once_then_succeeds_gives_a_normal_answer(perry):
     reply = perry.send("How big is my Q3 marketing budget?")
 
     assert reply.startswith("The marketing budget for Q3 is 40,000 dollars.")
-    assert reply.endswith("Citations: [budget.md]")
+    assert reply.endswith(
+        "Citations: [budget.md]\nFound with: Hybrid search (picked logically)"
+    )
     assert perry.consulted() == ["ask_knowledge_agent"]
 
 
@@ -38,13 +40,13 @@ def two_step_turn_where_the_second_step_fails_twice(perry):
     perry.script(
         # Step 1 works.
         call("ask_knowledge_agent", question="What is the Q3 marketing budget?"),
-        call("search_documents", query="Q3 marketing budget"),
+        call("hybrid_search", question="Q3 marketing budget"),
         "The Q3 marketing budget is 40,000 dollars [budget.md].",
         # Step 2: the Knowledge Agent finds passages, then its model fails, twice.
         call("ask_knowledge_agent", question="Is the ridge path steep?"),
-        call("search_documents", query="ridge path steep"),
+        call("hybrid_search", question="ridge path steep"),
         rate_limited(),
-        call("search_documents", query="ridge path steep"),
+        call("hybrid_search", question="ridge path steep"),
         rate_limited(),
         report_every_step,
     )
@@ -55,7 +57,9 @@ def test_step_that_fails_twice_is_named_and_the_other_results_are_kept(perry):
     reply = two_step_turn_where_the_second_step_fails_twice(perry)
 
     assert "The Q3 marketing budget is 40,000 dollars." in reply
-    assert reply.endswith("Citations: [budget.md]")
+    assert reply.endswith(
+        "Citations: [budget.md]\nFound with: Hybrid search (picked logically)"
+    )
     assert "ask_knowledge_agent(question='Is the ridge path steep?') failed twice" in reply
     assert perry.consulted() == ["ask_knowledge_agent", "ask_knowledge_agent"]
 

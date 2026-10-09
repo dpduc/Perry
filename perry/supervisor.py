@@ -16,6 +16,7 @@ from typing import Any
 
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, ToolMessage
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.errors import GraphRecursionError
@@ -24,6 +25,9 @@ from langgraph.types import Command, StateSnapshot
 from perry import charts, db, models, privacy, retries, usage, workspace
 from perry.agents import analysis, knowledge, task
 from perry.images import user_message
+
+# The per-request override: the Retrieval Technique the Knowledge Agent must use, if any.
+RETRIEVAL_TECHNIQUE = "perry_retrieval_technique"
 
 # Each step is one Supervisor decision (call an Agent, or answer).
 MAX_STEPS_PER_TURN = 6
@@ -55,11 +59,15 @@ notes), get that information, then give the Task Agent the complete content to s
 request revised to follow the note."""
 
 
-@tool
-def ask_knowledge_agent(question: str) -> str:
+@tool(response_format="content_and_artifact")
+def ask_knowledge_agent(question: str, config: RunnableConfig) -> tuple[str, dict]:
     """Ask the Knowledge Agent a self-contained question about the user's Documents.
     Returns findings with citations."""
-    return knowledge.ask(question)
+    # The per-request override rides in the Turn's config, unseen by the Supervisor's model.
+    forced = config.get("configurable", {}).get(RETRIEVAL_TECHNIQUE)
+    findings = knowledge.find(question, forced)
+    # The model reads the findings; the code composing the answer reads the artifact.
+    return findings.text, {"found_with": list(findings.found_with)}
 
 
 # Never retried: a retry would re-run the Task Agent, and with it any Write Action.
@@ -149,6 +157,7 @@ RECURSION_LIMIT = 2 * MAX_STEPS_PER_TURN + 1
 _TURN_ID = "perry_turn_id"
 _TURN_STARTED_AT_STEP = "perry_turn_started_at_step"
 _TURN_RESUMES = "perry_turn_resumes"
+_TURN_TECHNIQUE = "perry_turn_technique"
 
 
 def _config(thread_id: str) -> dict:
@@ -178,21 +187,24 @@ class _TurnRun:
         before: StateSnapshot,
         request: HumanMessage | None,
         turn_id: str | None = None,
+        technique: str | None = None,
     ) -> "_TurnRun":
-        """A new Turn for `request` (`turn_id`, or a new id), or with no `request` the
-        Turn `before` is paused in."""
+        """A new Turn for `request` (`turn_id`, or a new id; `technique` forced, if
+        given), or with no `request` the Turn `before` is paused in."""
         paused = (before.metadata or {}) if request is None else {}
         turn_id = paused.get(_TURN_ID) or turn_id or usage.new_turn_id()
+        technique = paused.get(_TURN_TECHNIQUE, technique)
         started_at = paused.get(_TURN_STARTED_AT_STEP, _graph_step(before))
         # Each resume runs the paused graph step again, so it isn't counted twice.
         resumes = paused.get(_TURN_RESUMES, -1) + 1
         steps_used = max(0, _graph_step(before) - started_at - resumes)
         config = {
-            **_config(thread_id),
+            "configurable": {"thread_id": thread_id, RETRIEVAL_TECHNIQUE: technique},
             "metadata": {
                 _TURN_ID: turn_id,
                 _TURN_STARTED_AT_STEP: started_at,
                 _TURN_RESUMES: resumes,
+                _TURN_TECHNIQUE: technique,
             },
             "recursion_limit": RECURSION_LIMIT - steps_used,
         }
@@ -208,13 +220,19 @@ class _TurnRun:
 
 
 def run_turn(
-    thread_id: str, message: str, images: list[str | Path] = (), turn_id: str | None = None
+    thread_id: str,
+    message: str,
+    images: list[str | Path] = (),
+    turn_id: str | None = None,
+    technique: str | None = None,
 ) -> TurnResult:
     """Answer `message`, with any attached image files given to the model as well.
     Returns the answer, or the Confirmation the Turn is waiting for.
 
     `turn_id` continues a Turn whose model calls began before the message existed
-    (e.g. transcribing a voice request); by default the Turn is new."""
+    (e.g. transcribing a voice request); by default the Turn is new. `technique` (the
+    per-request override) names the Retrieval Technique the Knowledge Agent must use
+    if the Supervisor asks it; by default the Knowledge Agent picks."""
     config = _config(thread_id)
     graph = supervisor()
     cancelled = _cancel_pending(graph, config)
@@ -222,7 +240,8 @@ def run_turn(
         outcome = refused
     else:
         request = user_message(message, images)
-        run = _TurnRun.start(graph, thread_id, graph.get_state(config), request, turn_id)
+        before = graph.get_state(config)
+        run = _TurnRun.start(graph, thread_id, before, request, turn_id, technique)
         outcome = _run(run, {"messages": [request]})
     if cancelled and isinstance(outcome, str):
         return f"{cancelled}\n\n{outcome}"
@@ -312,11 +331,13 @@ def agents_consulted(thread_id: str) -> list[str]:
 
 def _final_answer(messages: list) -> str:
     """The Turn's final answer, keeping every chart an Agent made and every Citation the
-    Knowledge Agent gave during the Turn."""
+    Knowledge Agent gave during the Turn, then saying which Retrieval Techniques found them."""
     results = agent_results(messages)
     answer = charts.keep(messages[-1].text, [m.text for m in results])
-    findings = [m.text for m in results if m.name == ask_knowledge_agent.name]
-    return knowledge.citations_at_end(answer, findings)
+    knowledge_results = [m for m in results if m.name == ask_knowledge_agent.name]
+    answer = knowledge.citations_at_end(answer, [m.text for m in knowledge_results])
+    found_with = [f for m in knowledge_results for f in (m.artifact or {}).get("found_with", [])]
+    return knowledge.with_found_with(answer, found_with)
 
 
 def _confirmation(request: dict) -> Confirmation:

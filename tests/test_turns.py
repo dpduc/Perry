@@ -18,7 +18,7 @@ def test_question_about_documents_is_answered_by_the_knowledge_agent_with_citati
     perry.add_document("hiking.md", "Trail notes: the ridge path is steep after the waterfall.")
     perry.script(
         call("ask_knowledge_agent", question="What is the Q3 marketing budget?"),  # Supervisor
-        call("search_documents", query="Q3 marketing budget"),  # Knowledge Agent
+        call("hybrid_search", question="Q3 marketing budget"),  # Knowledge Agent
         last_message,  # Knowledge Agent reports the passages it found
         last_message,  # Supervisor passes the findings on
     )
@@ -27,7 +27,7 @@ def test_question_about_documents_is_answered_by_the_knowledge_agent_with_citati
 
     assert perry.consulted() == ["ask_knowledge_agent"]
     assert reply.startswith("The marketing budget for Q3 is 40,000 dollars.")
-    assert reply.splitlines()[-1].startswith("Citations: [budget.md]")
+    assert "\nCitations: [budget.md]" in reply  # at the end, then the "Found with" line
 
 
 def test_citations_are_moved_out_of_the_answer_to_its_end(perry):
