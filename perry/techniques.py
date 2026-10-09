@@ -10,10 +10,13 @@ kind naming what the call is for (e.g. "rewrite"), so the Usage Ledger shows wha
 technique costs and its calls count toward the Turn's Token Ceiling.
 """
 
+import re
 from dataclasses import dataclass
+from itertools import zip_longest
 
 from langchain_core.runnables import Runnable, chain
 
+from perry import models
 from perry.search import SearchHit, hybrid_search
 
 
@@ -40,6 +43,48 @@ def hybrid(question: str) -> list[SearchHit]:
     return hybrid_search(question)
 
 
+
+# Question Decomposition asks for at most this many sub-questions, and searches each
+# for this many Chunks: together they bound its calls and the findings' length.
+MAX_SUB_QUESTIONS = 5
+CHUNKS_PER_SUB_QUESTION = 4
+
+DECOMPOSE_PROMPT = """Split the question below into the simpler sub-questions that together answer it, such as one per fact it compares or chains. Each sub-question must be self-contained and searchable on its own. Write at most {most}, one per line, with no numbering and nothing else. If the question asks for only one fact, write it unchanged.
+
+Question: {question}"""
+
+
+# A bullet or number starting a line, e.g. "- ", "* ", "2. " or "3) ".
+_LIST_MARKER = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s*")
+
+
+def sub_questions(question: str) -> list[str]:
+    """`question` split by the model into at most MAX_SUB_QUESTIONS sub-questions, or
+    the question itself if the model gave none."""
+    prompt = DECOMPOSE_PROMPT.format(most=MAX_SUB_QUESTIONS, question=question)
+    reply = models.chat_model(kind="decompose").invoke(prompt).text
+    # Models often number or bullet the lines anyway: drop that.
+    lines = (_LIST_MARKER.sub("", line).strip() for line in reply.splitlines())
+    found = list(dict.fromkeys(line for line in lines if line))
+    return found[:MAX_SUB_QUESTIONS] or [question]
+
+
+@chain
+def question_decomposition(question: str) -> list[SearchHit]:
+    """Question Decomposition: hybrid search for each sub-question, then their Chunks
+    together, taking each sub-question's best before anyone's second best."""
+    rankings = [
+        hybrid_search(sub_question, limit=CHUNKS_PER_SUB_QUESTION)
+        for sub_question in sub_questions(question)
+    ]
+    union: dict[tuple[str, int, str], SearchHit] = {}
+    for tier in zip_longest(*rankings):
+        for hit in tier:
+            if hit is not None:
+                union.setdefault((hit.document, hit.page, hit.text), hit)
+    return list(union.values())
+
+
 TECHNIQUES: tuple[Technique, ...] = (
     Technique(
         name="hybrid_search",
@@ -56,6 +101,25 @@ TECHNIQUES: tuple[Technique, ...] = (
             "When is the next team offsite?",
         ),
         chain=hybrid,
+    ),
+    Technique(
+        name="question_decomposition",
+        label="Question Decomposition",
+        description=(
+            "Split the question into sub-questions and search the user's Documents for "
+            "each. Best for one question that compares or chains several facts, e.g. two "
+            "figures side by side, or a fact that depends on another. Not for requests "
+            "that need other Agents (such as emailing what was found)."
+        ),
+        examples=(
+            "Did we spend more on catering or on travel for the conference?",
+            "How does this year's rent compare with last year's?",
+            "Who approved the vendor contract, and when does it expire?",
+            "Which office has more staff, Hanoi or Da Nang, and who manages each?",
+            "What changed between the first and second drafts of the proposal?",
+            "Is the project deadline before or after the funding decision date?",
+        ),
+        chain=question_decomposition,
     ),
 )
 
