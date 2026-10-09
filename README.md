@@ -8,7 +8,7 @@ A personal multi-agent assistant that runs on your own machine. You talk to one 
 
 | Agent | What it does for you |
 |---|---|
-| **Knowledge Agent** | Answers questions from the Documents you upload (PDF, Markdown, text) and cites the exact page each claim came from. Picks a Retrieval Technique per question (today: hybrid search, pgvector + Postgres full-text; Multi-query and RAG fusion, which rewrite the question into several hybrid searches) and says which one it used. Scanned PDF pages with no text are read by the vision model at upload. |
+| **Knowledge Agent** | Answers questions from the Documents you upload (PDF, Markdown, text) and cites the exact page each claim came from. Picks a Retrieval Technique per question (today: hybrid search, pgvector + Postgres full-text; Multi-query and RAG fusion, which rewrite the question into several hybrid searches; Step-back, which also searches a broader version of "why" questions; HyDE, which searches with a hypothetical answer) and says which one it used. Scanned PDF pages with no text are read by the vision model at upload. |
 | **Analysis Agent** | Answers questions about your Datasets (CSV, or each sheet of an XLSX). It writes read-only SQL and shows you the query it ran. When SQL isn't enough (statistics, forecasts, charts) it writes Python that runs in a locked-down Docker **Sandbox**, and the charts appear in the chat. |
 | **Task Agent** | Reads your Google Calendar and Gmail freely. Anything that changes something or reaches another person (send, reply, create, move or delete an event) waits for you on a **Confirmation card**, where you approve, edit the fields, or reject with a note. |
 
