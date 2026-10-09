@@ -25,8 +25,8 @@ MODES = (SEMANTIC, LOGICAL, CASCADE)
 
 # How much nearer (cosine similarity) the closest technique's examples must be than the
 # runner-up's for cascade picking to trust them. Tuned on the eval set, never the benchmark:
-# `uv run python -m evals --tune-margin` (2026-10-09, gemini-embedding-001).
-DEFAULT_CASCADE_MARGIN = 0.074
+# `uv run python -m evals --tune-margin` (2026-10-09, nomic-embed-text).
+DEFAULT_CASCADE_MARGIN = 0.116
 
 
 def mode(override: str | None = None) -> str:

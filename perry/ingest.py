@@ -14,7 +14,7 @@ from pathlib import Path
 
 from pgvector import Vector
 
-from perry import colbert, db, models, raptor, summaries, usage
+from perry import colbert, db, models, raptor, reembed, summaries, usage
 from perry.documents import (
     Chunk,
     ParsedDocument,
@@ -320,6 +320,13 @@ def ingest_files(paths: list[Path]) -> list[IngestResult]:
     return results
 
 
+def ensure_indexes_current() -> None:
+    """Bring every index in step with the stored Chunks, at start-up: embeddings made by
+    the current embedding model (perry.reembed), and the ColBERT index (ADR-0002)."""
+    reembed.ensure_current()
+    colbert.ensure_in_step()
+
+
 def main(argv: list[str] | None = None, *, ask=input) -> None:
     parser = argparse.ArgumentParser(prog="python -m perry.ingest", description=__doc__)
     parser.add_argument("target", help="a Document file, or a folder to ingest recursively")
@@ -327,7 +334,7 @@ def main(argv: list[str] | None = None, *, ask=input) -> None:
     args = parser.parse_args(argv)
 
     db.init_schema()
-    colbert.ensure_in_step()
+    ensure_indexes_current()
     path = Path(args.target)
     files = [path] if path.is_file() else find_files(path)
     if not files:

@@ -1,6 +1,6 @@
 """Model provider seam: the only module that knows which model API is used.
 
-Switching to a local model (see the design decisions in GLOSSARY.md / docs/adr)
+Which provider does what is decided here (docs/adr/0003); switching a model
 is a change to this file only. Tests swap the whole provider with `use()`.
 
 Every call made through this module is recorded in the usage ledger (`perry.usage`),
@@ -11,27 +11,37 @@ whichever provider is in use. Inside a Turn, a chat or embedding call raises
 import base64
 import math
 import os
+import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import datetime, timedelta
 from functools import cache, cached_property
-from typing import Protocol
+from typing import Any, Protocol
+from zoneinfo import ZoneInfo
 
 import httpx
 import numpy as np
-from langchain_core.callbacks import BaseCallbackHandler
+import openai
+from langchain_core.callbacks import BaseCallbackHandler, CallbackManager
 from langchain_core.exceptions import ModelError
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.rate_limiters import InMemoryRateLimiter
-from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_google_genai.chat_models import GoogleRateLimitError
-from langchain_ollama import ChatOllama
+from langchain_ollama import ChatOllama, OllamaEmbeddings
+from langchain_openai import ChatOpenAI
+from pydantic import ConfigDict
 
 from perry import images
 
-# The provider's "quota exhausted" error, so callers can report it without knowing the provider.
+# The free model's "quota exhausted" error (tests raise it to simulate one).
 RateLimitError = GoogleRateLimitError
+# Every provider's "rate limit or quota reached" error, so callers can report one without
+# knowing the provider.
+RATE_LIMIT_ERRORS = (GoogleRateLimitError, openai.RateLimitError)
 
 
 def is_transient(error: BaseException) -> bool:
@@ -39,11 +49,28 @@ def is_transient(error: BaseException) -> bool:
     rate limits, timeouts, dropped connections and the provider's own server errors."""
     if isinstance(error, ModelError):
         return error.is_retryable
-    # The Gemini client lets network timeouts and connection drops through as httpx errors.
+    if isinstance(error, (openai.RateLimitError, openai.APIConnectionError)):
+        return True  # APITimeoutError is an APIConnectionError
+    if isinstance(error, openai.APIStatusError):
+        return error.status_code >= 500
+    # The Gemini and Ollama clients let network timeouts and connection drops through as
+    # httpx errors (e.g. ConnectError when Ollama isn't running).
     return isinstance(error, (TimeoutError, ConnectionError, httpx.TransportError))
 
+
+# Chat runs on Gemini's free tier, and on the paid OpenAI model only when Gemini's free
+# quota is used up or it stays overloaded (see `_FreeFirst`). Without OPENAI_API_KEY there
+# is no fallback.
 LLM_MODEL = os.getenv("PERRY_LLM_MODEL", "gemini-3.8-flash")
-EMBEDDING_MODEL = os.getenv("PERRY_EMBEDDING_MODEL", "gemini-embedding-001")
+FALLBACK_LLM_MODEL = os.getenv("PERRY_FALLBACK_LLM_MODEL", "gpt-5.4-mini")
+# The benchmark grid runs every Turn on one paid model, never mixing in the free one.
+BENCHMARK_LLM_MODEL = os.getenv("PERRY_BENCHMARK_LLM_MODEL", "gpt-5.4-nano")
+# GPT-5 models can think before answering, billed as output. "none" is the cheapest, and
+# the only setting the chat completions API accepts together with tools for these models.
+OPENAI_REASONING_EFFORT = os.getenv("PERRY_OPENAI_REASONING_EFFORT", "none")
+# Embeddings run on this machine (docs/adr/0003): free, no quota, and nothing embedded
+# leaves it. Changing the model re-embeds every Chunk and Summary when Perry next starts.
+EMBEDDING_MODEL = os.getenv("PERRY_EMBEDDING_MODEL", "nomic-embed-text")
 # Text-to-speech: a Gemini model whose name ends in "-tts" answers with audio.
 TTS_MODEL = os.getenv("PERRY_TTS_MODEL", "gemini-2.5-flash-preview-tts")
 TTS_VOICE = os.getenv("PERRY_TTS_VOICE", "Kore")
@@ -59,9 +86,13 @@ SUMMARY_CONTEXT_TOKENS = int(os.getenv("PERRY_SUMMARY_CONTEXT_TOKENS", "8192"))
 DEFAULT_COLBERT_MODEL = "answerdotai/answerai-colbert-small-v1"
 COLBERT_MODEL = os.getenv("PERRY_COLBERT_MODEL", DEFAULT_COLBERT_MODEL).strip()
 
-# pgvector's HNSW index supports at most 2000 dimensions.
-# Changing the model or this number means re-ingesting every Document.
-EMBEDDING_DIMENSIONS = 1536
+# nomic-embed-text's size. pgvector's HNSW index supports at most 2000 dimensions.
+# Changing it resizes the columns and re-embeds everything (perry.reembed).
+EMBEDDING_DIMENSIONS = int(os.getenv("PERRY_EMBEDDING_DIMENSIONS", "768"))
+# nomic-embed-text is trained with these task prefixes; other models get none.
+_EMBEDDING_PREFIXES = (
+    ("search_document: ", "search_query: ") if EMBEDDING_MODEL.startswith("nomic-embed") else ("", "")
+)
 
 
 @dataclass(frozen=True)
@@ -156,8 +187,122 @@ class Provider:
     colbert: ColbertEncoder | None = None
 
 
+class FreeQuota:
+    """Whether the free model's daily quota is used up. Gemini's free tier resets at
+    midnight Pacific time; until then, chat goes straight to the paid model."""
+
+    RESETS_IN = ZoneInfo("America/Los_Angeles")
+
+    def __init__(self):
+        self._until: datetime | None = None
+        self._lock = threading.Lock()
+
+    def exhausted(self, now: datetime | None = None) -> bool:
+        now = now or datetime.now(self.RESETS_IN)
+        with self._lock:
+            return self._until is not None and now < self._until
+
+    def use_up(self, now: datetime | None = None) -> None:
+        now = (now or datetime.now(self.RESETS_IN)).astimezone(self.RESETS_IN)
+        midnight = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        with self._lock:
+            self._until = midnight
+
+    def reset(self) -> None:
+        with self._lock:
+            self._until = None
+
+
+free_quota = FreeQuota()
+
+
+def is_daily_quota(error: BaseException) -> bool:
+    """Whether `error` says the free model's quota for the day is used up (Gemini names
+    the quota it hit, e.g. GenerateRequestsPerDayPerProjectPerModel-FreeTier)."""
+    return isinstance(error, GoogleRateLimitError) and "PerDay" in str(error)
+
+
+def _falls_back(error: BaseException) -> bool:
+    """Whether a failed free call goes to the paid model: the free quota is used up
+    (daily or per minute) or the provider stays overloaded after the client's retries."""
+    return isinstance(error, GoogleRateLimitError) or is_transient(error)
+
+
+class _FreeFirst(BaseChatModel):
+    """A chat model that answers on the free model when it can and on the paid one when
+    it can't (see `_falls_back`). Agents get it like any chat model: `bind_tools` keeps
+    the tools and binds them to whichever model answers each call.
+
+    The usage ledger records each call once, by the model that answered (its reply
+    names it); the inner models carry no recorder of their own."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    free: BaseChatModel
+    paid: BaseChatModel | None = None
+    tools: tuple[list, dict] | None = None
+
+    @property
+    def _llm_type(self) -> str:
+        return "free-first"
+
+    def bind_tools(self, tools, **kwargs):
+        return self.model_copy(update={"tools": (list(tools), kwargs)})
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs) -> ChatResult:
+        config = {"callbacks": _child_callbacks(run_manager)} if run_manager else None
+        if self.paid is None or not free_quota.exhausted():
+            try:
+                return self._answer(self.free, messages, stop, config, kwargs)
+            except Exception as error:
+                if self.paid is None or not _falls_back(error):
+                    raise
+                if is_daily_quota(error):
+                    free_quota.use_up()
+        return self._answer(self.paid, messages, stop, config, kwargs)
+
+    def _answer(self, model, messages, stop, config, kwargs: dict[str, Any]) -> ChatResult:
+        if self.tools is not None:
+            tools, options = self.tools
+            model = model.bind_tools(tools, **options)
+        reply = model.invoke(messages, config, stop=stop, **kwargs)
+        # The usage ledger records the call by the model its reply names.
+        if not reply.response_metadata.get("model_name"):
+            name = getattr(model, "model_name", None) or getattr(model, "model", None)
+            reply.response_metadata["model_name"] = name or model._llm_type
+        return ChatResult(generations=[ChatGeneration(message=reply)])
+
+
+def _child_callbacks(run_manager) -> CallbackManager:
+    """Callbacks for the inner model's call, nested under this call (e.g. in LangSmith).
+    Only inherited handlers pass on, so the usage recorder doesn't record it twice."""
+    return CallbackManager(
+        handlers=run_manager.inheritable_handlers,
+        inheritable_handlers=run_manager.inheritable_handlers,
+        parent_run_id=run_manager.run_id,
+        tags=run_manager.inheritable_tags,
+        inheritable_tags=run_manager.inheritable_tags,
+        metadata=run_manager.inheritable_metadata,
+        inheritable_metadata=run_manager.inheritable_metadata,
+    )
+
+
+def free_first(free: BaseChatModel, paid: BaseChatModel | None) -> BaseChatModel:
+    """A chat model that answers on `free` and falls back to `paid` (see `_FreeFirst`)."""
+    return _FreeFirst(free=free, paid=paid)
+
+
+def _openai_chat(model: str) -> BaseChatModel:
+    # No temperature: GPT-5 models only accept the default.
+    return ChatOpenAI(model=model, reasoning_effort=OPENAI_REASONING_EFFORT, max_retries=3)
+
+
+def paid_chat_available() -> bool:
+    return bool(os.getenv("OPENAI_API_KEY"))
+
+
 @cache
-def _gemini() -> Provider:
+def _default() -> Provider:
     # Shared across every chat model so all Agents together stay under the
     # free tier's per-minute request limit (5/min for Flash). No bursts: a burst
     # followed by steady pacing can still exceed the per-minute window.
@@ -165,14 +310,18 @@ def _gemini() -> Provider:
         requests_per_second=float(os.getenv("PERRY_REQUESTS_PER_SECOND", str(4 / 60))),
         max_bucket_size=1,
     )
-    embeddings = GoogleGenerativeAIEmbeddings(
-        model=EMBEDDING_MODEL, output_dimensionality=EMBEDDING_DIMENSIONS
-    )
+    # A stopped Ollama raises httpx.ConnectError on the first call, not here.
+    embeddings = OllamaEmbeddings(model=EMBEDDING_MODEL, base_url=OLLAMA_URL)
+    document_prefix, query_prefix = _EMBEDDING_PREFIXES
 
-    def chat_model() -> ChatGoogleGenerativeAI:
+    def gemini() -> ChatGoogleGenerativeAI:
         return ChatGoogleGenerativeAI(
             model=LLM_MODEL, temperature=0, rate_limiter=rate_limiter, max_retries=3
         )
+
+    def chat_model() -> BaseChatModel:
+        paid = _openai_chat(FALLBACK_LLM_MODEL) if paid_chat_available() else None
+        return free_first(gemini(), paid)
 
     # The TTS model has its own per-minute quota, so it gets its own pacing.
     tts = ChatGoogleGenerativeAI(
@@ -187,13 +336,14 @@ def _gemini() -> Provider:
     return Provider(
         chat_model=chat_model,
         embed_documents=lambda texts: embeddings.embed_documents(
-            texts, task_type="RETRIEVAL_DOCUMENT"
+            [document_prefix + text for text in texts]
         ),
-        embed_query=lambda text: embeddings.embed_query(text, task_type="RETRIEVAL_QUERY"),
+        embed_query=lambda text: embeddings.embed_query(query_prefix + text),
         embedding_model=EMBEDDING_MODEL,
-        transcribe=lambda audio, mime_type: _gemini_transcribe(chat_model(), audio, mime_type),
+        # Speech and scanned pages stay on the free model, with no paid fallback.
+        transcribe=lambda audio, mime_type: _gemini_transcribe(gemini(), audio, mime_type),
         synthesize=lambda text: _gemini_synthesize(tts, text),
-        read_image=lambda image, mime_type: _gemini_read_image(chat_model(), image, mime_type),
+        read_image=lambda image, mime_type: _gemini_read_image(gemini(), image, mime_type),
         vision_model=LLM_MODEL,
         summary_model=_ollama_summary_model,
         summary_model_name=SUMMARY_MODEL,
@@ -288,7 +438,23 @@ _override: Provider | None = None
 
 
 def _provider() -> Provider:
-    return _override or _gemini()
+    return _override or _default()
+
+
+@contextmanager
+def paid_chat_only(model: str = BENCHMARK_LLM_MODEL) -> Iterator[Provider]:
+    """Answer every chat call in the block on the paid `model`, never the free one (the
+    benchmark grid, so its rows aren't a mix of two models). Raises RuntimeError without
+    OPENAI_API_KEY. Everything else stays on the current provider."""
+    if not paid_chat_available():
+        raise RuntimeError("OPENAI_API_KEY isn't set, so there is no paid chat model.")
+    with use(replace(_provider(), chat_model=lambda: _openai_chat(model))) as provider:
+        yield provider
+
+
+def paid_chat_model(model: str = BENCHMARK_LLM_MODEL) -> str:
+    """The name the usage ledger prices `paid_chat_only` calls by (for estimates)."""
+    return model
 
 
 @contextmanager
@@ -480,7 +646,7 @@ def transcribe_page(image: bytes, mime_type: str) -> str:
 
 
 def estimate_tokens(texts: list[str]) -> int:
-    """Gemini's Developer API doesn't report embedding usage: about 4 characters per token."""
+    """Embedding calls don't report their tokens here: about 4 characters per token."""
     return sum(math.ceil(len(text) / 4) for text in texts)
 
 

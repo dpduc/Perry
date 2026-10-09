@@ -49,7 +49,7 @@ def database():
         for row in conn.execute(tables).fetchall():
             table = sql.Identifier("analytics", row["tablename"])
             conn.execute(sql.SQL("DROP TABLE {}").format(table))
-        conn.execute("TRUNCATE usage_ledger")
+        conn.execute("TRUNCATE usage_ledger, store_facts")
     return db
 
 

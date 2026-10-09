@@ -93,8 +93,8 @@ def prepare(setups: list[str], documents: list[Path]) -> None:
 
     Raises NotReady if a setup needs ColBERT or the local summary model and it isn't
     there, or if any Document still isn't summarised."""
-    from perry import colbert, db, models, summaries
-    from perry.ingest import ingest_file
+    from perry import db, models, summaries
+    from perry.ingest import ensure_indexes_current, ingest_file
 
     db.init_schema()
     for path in documents:
@@ -104,7 +104,7 @@ def prepare(setups: list[str], documents: list[Path]) -> None:
             "ColBERT has no encoder: PERRY_COLBERT_MODEL is empty. Unset it to use "
             f"{models.DEFAULT_COLBERT_MODEL}."
         )
-    colbert.ensure_in_step()  # also Documents stored before ColBERT existed
+    ensure_indexes_current()  # e.g. Documents stored before ColBERT or a model change
     if not _needs_summaries(setups):
         return
     if not models.summaries_supported():
@@ -147,8 +147,29 @@ def ask_perry(setup: str, question: str) -> Answer:
         found_with=tuple(found_with),
         cost_usd=spent.cost_usd,
         tokens=spent.tokens,
-        model=", ".join(chat_models) or models.LLM_MODEL,
+        model=", ".join(chat_models) or models.BENCHMARK_LLM_MODEL,
     )
+
+
+# What one benchmark Turn is assumed to use, for the estimate shown before a run: the
+# Knowledge Agent's prompt with every technique's description, two or three calls, and
+# the Chunks they found. Compare with the "tokens" of rows already in grid.jsonl.
+TURN_INPUT_TOKENS = 8_000
+TURN_OUTPUT_TOKENS = 1_000
+
+
+def turns_to_ask(questions: list[Question], setups: list[str], path: Path, rerun: bool) -> int:
+    """How many (setup, question) Turns `run_grid` would ask: those not already in `path`,
+    or all of them with `rerun`."""
+    done = set() if rerun else set(load_grid(path))
+    return sum((s, q.id) not in done for s in setups for q in questions)
+
+
+def estimate_usd(turns: int, model: str) -> float:
+    """What `turns` benchmark Turns are expected to cost on `model`, from the price table."""
+    from perry import usage
+
+    return turns * usage.cost(model, TURN_INPUT_TOKENS, TURN_OUTPUT_TOKENS)
 
 
 def load_grid(path: Path) -> dict[tuple[str, str], dict]:

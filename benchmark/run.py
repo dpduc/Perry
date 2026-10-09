@@ -4,7 +4,7 @@
     uv run python -m benchmark.run perry           # ingest + answer with Perry
     uv run python -m benchmark.run report          # score both -> results/RESULTS.md
     uv run python -m benchmark.run perry-retrieval # no chat model: page recall of hybrid search
-    uv run python -m benchmark.run grid [--only SETUP,...] [--rerun]
+    uv run python -m benchmark.run grid [--only SETUP,...] [--rerun] [--yes]
                                     # every Retrieval Technique forced and every picking
                                     # mode -> results/grid.jsonl and results/GRID.md
     uv run python -m benchmark.run grid-report     # redraw results/GRID.md, no model calls
@@ -197,11 +197,11 @@ def _use_benchmark_database() -> None:
 
 def ingest_perry() -> None:
     _use_benchmark_database()
-    from perry import colbert, db
-    from perry.ingest import ingest_file
+    from perry import db
+    from perry.ingest import ensure_indexes_current, ingest_file
 
     db.init_schema()
-    colbert.ensure_in_step()  # Documents stored before ColBERT existed
+    ensure_indexes_current()  # e.g. Documents stored before ColBERT or a model change
     for path in sorted(DOCUMENTS_DIR.glob("*.pdf")):
         print(ingest_file(path).describe(), flush=True)
 
@@ -284,19 +284,38 @@ def run_qabot(questions: list[Question]) -> None:
     answer_all(questions, ask_qabot, answers_path("qabot"))
 
 
-def run_grid(questions: list[Question], only: list[str] | None, rerun: bool) -> None:
-    """The technique grid (see benchmark/grid.py) in the benchmark's own database. The
-    table is redrawn even when the run stops early, so what was answered is shown."""
+def run_grid(
+    questions: list[Question], only: list[str] | None, rerun: bool, *, yes: bool = False, ask=input
+) -> None:
+    """The technique grid (see benchmark/grid.py) in the benchmark's own database, every
+    Turn on the one paid model (PERRY_BENCHMARK_LLM_MODEL) so rows never mix two models.
+    Shows an estimate and waits for an OK (unless `yes`) before any paid call. The table
+    is redrawn even when the run stops early, so what was answered is shown."""
     _use_benchmark_database()
     from benchmark import grid
+    from perry import models
 
+    if not models.paid_chat_available():
+        sys.exit("Not started: the grid runs on the paid model and OPENAI_API_KEY isn't set.")
     setups = grid.select(only)
+    path = RESULTS_DIR / "grid.jsonl"
     try:
         grid.prepare(setups, sorted(DOCUMENTS_DIR.glob("*.pdf")))
     except grid.NotReady as not_ready:
         sys.exit(f"Not started: {not_ready}")
+    turns = grid.turns_to_ask(questions, setups, path, rerun)
+    model = models.BENCHMARK_LLM_MODEL
+    print(
+        f"{turns} Turns to ask on {model}: about ${grid.estimate_usd(turns, model):.2f} "
+        f"(assuming {grid.TURN_INPUT_TOKENS:,} input and {grid.TURN_OUTPUT_TOKENS:,} output "
+        "tokens a Turn).",
+        flush=True,
+    )
+    if turns and not yes and ask("Go ahead? [y/N] ").strip().lower() not in ("y", "yes"):
+        sys.exit("Not started.")
     try:
-        grid.run_grid(questions, setups, RESULTS_DIR / "grid.jsonl", grid.ask_perry, rerun=rerun)
+        with models.paid_chat_only(model):
+            grid.run_grid(questions, setups, path, grid.ask_perry, rerun=rerun)
     finally:
         print(write_grid_report(questions).split("## Correct per")[0])
 
@@ -322,12 +341,15 @@ def main(argv: list[str]) -> None:
     parser.add_argument(
         "--rerun", action="store_true", help="grid: ask the selected setups afresh"
     )
+    parser.add_argument(
+        "--yes", action="store_true", help="grid: start without asking about the estimate"
+    )
     args = parser.parse_args(argv)
     command = args.command
     questions = load_questions(QUESTIONS_PATH)
     if command == "grid":
         only = [name.strip() for name in args.only.split(",")] if args.only else None
-        run_grid(questions, only, args.rerun)
+        run_grid(questions, only, args.rerun, yes=args.yes)
     elif command == "grid-report":
         print(write_grid_report(questions))
     elif command == "perry":

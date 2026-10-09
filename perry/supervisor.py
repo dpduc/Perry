@@ -278,10 +278,15 @@ _STOP_REPLIES: dict[type[BaseException], Callable[[Any], str]] = {
         f"I stopped after {MAX_STEPS_PER_TURN} steps without finishing. "
         "Try splitting the request into smaller ones."
     ),
-    # The model client already retried with backoff before giving up.
-    models.RateLimitError: lambda _: (
-        "The model's rate limit was reached and retrying didn't help. Try again in a minute."
-    ),
+    # The model clients already retried with backoff (and fell back to the paid model,
+    # if there is one) before giving up.
+    **{
+        error: lambda _: (
+            "The model's rate limit or quota was reached and retrying didn't help. "
+            "Try again in a minute, or later today if the daily quota is used up."
+        )
+        for error in models.RATE_LIMIT_ERRORS
+    },
     workspace.ReconnectNeeded: str,
     privacy.Refused: str,
 }

@@ -45,18 +45,18 @@ def test_turn_that_crosses_the_daily_cap_midway_finishes(perry, cap):
     assert perry.send("And for Q4?").startswith("Perry has used today's budget of $0.01")
 
 
-def test_daily_cap_defaults_to_one_dollar(perry, prices, monkeypatch):
+def test_daily_cap_defaults_to_fifty_cents(perry, prices, monkeypatch):
     monkeypatch.delenv("PERRY_DAILY_CAP_USD", raising=False)
     prices({"scripted": {"input": 1.0, "output": 1.0}})
-    perry.script(with_usage("Hi!", 999_999))  # just under $1
+    perry.script(with_usage("Hi!", 499_999))  # just under $0.50
     perry.send("Hello")
     perry.script("Still here.")
     assert perry.send("Are you there?") == "Still here."
 
-    perry.script(with_usage("Yes.", 1))  # brings today to exactly $1
+    perry.script(with_usage("Yes.", 1))  # brings today to exactly $0.50
     perry.send("Sure?")
 
-    assert perry.send("Hello again").startswith("Perry has used today's budget of $1.00")
+    assert perry.send("Hello again").startswith("Perry has used today's budget of $0.50")
 
 
 def test_new_message_after_the_daily_cap_still_cancels_the_pending_confirmation(

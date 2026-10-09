@@ -36,6 +36,9 @@ CREATE TABLE IF NOT EXISTS chunks (
 -- source the on-disk ColBERT index is built from (docs/adr/0002).
 ALTER TABLE chunks ADD COLUMN IF NOT EXISTS colbert bytea;
 CREATE INDEX IF NOT EXISTS chunks_embedding_idx ON chunks USING hnsw (embedding vector_cosine_ops);
+-- NULL while the Chunk waits to be re-embedded after the embedding model changed
+-- (perry.reembed); searches skip it until then.
+ALTER TABLE chunks ALTER COLUMN embedding DROP NOT NULL;
 CREATE INDEX IF NOT EXISTS chunks_tsv_idx ON chunks USING gin (tsv);
 
 -- Written in the background after upload (perry.summaries): the summarising status,
@@ -65,6 +68,7 @@ CREATE TABLE IF NOT EXISTS summaries (
 CREATE INDEX IF NOT EXISTS summaries_document_idx ON summaries (document_id);
 CREATE INDEX IF NOT EXISTS summaries_embedding_idx
     ON summaries USING hnsw (embedding vector_cosine_ops);
+ALTER TABLE summaries ALTER COLUMN embedding DROP NOT NULL;
 
 CREATE TABLE IF NOT EXISTS summary_chunks (
     summary_id bigint NOT NULL REFERENCES summaries(id) ON DELETE CASCADE,
@@ -103,6 +107,12 @@ CREATE TABLE IF NOT EXISTS usage_ledger (
 );
 CREATE INDEX IF NOT EXISTS usage_ledger_recorded_at_idx ON usage_ledger (recorded_at);
 CREATE INDEX IF NOT EXISTS usage_ledger_turn_idx ON usage_ledger (turn_id);
+
+-- Facts about the stored data, e.g. which model embedded it (perry.reembed).
+CREATE TABLE IF NOT EXISTS store_facts (
+    key   text PRIMARY KEY,
+    value text NOT NULL
+);
 """
 
 # The Analysis Agent's SQL runs as this role. Postgres, not the prompt, keeps it
@@ -151,10 +161,15 @@ def _ensure_extension() -> None:
         conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
 
 
+# The tables with an embedding column, and the name of its HNSW index.
+EMBEDDED_TABLES = {"chunks": "chunks_embedding_idx", "summaries": "summaries_embedding_idx"}
+
+
 def init_schema() -> None:
     with pool().connection() as conn:
         # Several statements in one string can only run unprepared.
         conn.execute(SCHEMA, prepare=False)
+        _resize_embeddings(conn)
         role_sql = sql.SQL(ANALYST_ROLE_SQL).format(
             role=sql.Identifier(ANALYST_ROLE), password=sql.Literal(ANALYST_PASSWORD)
         )
@@ -168,6 +183,32 @@ def init_schema() -> None:
                 if attempt == 4:
                     raise
                 time.sleep(0.2 * (attempt + 1))
+
+
+def _resize_embeddings(conn: Connection) -> None:
+    """Give each embedding column EMBEDDING_DIMENSIONS dimensions if it has another size
+    (the embedding model changed). Its embeddings can't be kept, so they become NULL and
+    are re-embedded by `perry.reembed.ensure_current`."""
+    for table, index in EMBEDDED_TABLES.items():
+        row = conn.execute(
+            "SELECT atttypmod FROM pg_attribute "
+            "WHERE attrelid = %s::regclass AND attname = 'embedding'",
+            (table,),
+        ).fetchone()
+        if row is None or row["atttypmod"] == EMBEDDING_DIMENSIONS:
+            continue
+        with conn.transaction():
+            conn.execute(sql.SQL("DROP INDEX IF EXISTS {}").format(sql.Identifier(index)))
+            conn.execute(
+                sql.SQL("ALTER TABLE {} ALTER COLUMN embedding TYPE vector({}) USING NULL").format(
+                    sql.Identifier(table), sql.Literal(EMBEDDING_DIMENSIONS)
+                )
+            )
+            conn.execute(
+                sql.SQL("CREATE INDEX {} ON {} USING hnsw (embedding vector_cosine_ops)").format(
+                    sql.Identifier(index), sql.Identifier(table)
+                )
+            )
 
 
 def analyst_conninfo(statement_timeout_ms: int) -> str:
