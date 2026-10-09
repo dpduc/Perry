@@ -173,3 +173,14 @@ def test_document_summaries_technique_skips_documents_whose_summaries_are_not_re
     hits = document_summaries("What is the Q3 marketing budget?")
 
     assert {hit.citation for hit in hits} == {"budget.md"}
+
+
+def test_document_summaries_is_not_offered_for_picking_while_summaries_are_pending(
+    summary_model, upload
+):
+    upload("budget.md", "The marketing budget for Q3 is 40,000 dollars.")
+    assert "document_summaries" not in {t.name for t in techniques.available()}
+
+    summaries.summarise_pending()
+
+    assert "document_summaries" in {t.name for t in techniques.available()}
