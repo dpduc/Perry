@@ -67,15 +67,17 @@ class Findings:
     found_with: tuple[str, ...] = ()
 
 
-def find(question: str, forced: str | None = None) -> Findings:
+def find(
+    question: str, forced: str | None = None, picking_mode: str | None = None
+) -> Findings:
     """Answer `question` from the Documents. `forced` names the one Retrieval Technique
-    to use (the per-request override); by default one is picked in the picking mode in
-    force (see `perry.picking`)."""
+    to use (the per-request override); by default one is picked in `picking_mode`, or
+    the picking mode in force (see `perry.picking`)."""
     if forced:
         offered, how = [techniques.get(forced)], FORCED
     else:
         candidates = techniques.available()
-        picked = picking.pick(question, candidates)
+        picked = picking.pick(question, candidates, picking_mode)
         if picked:
             offered, how = [picked], PICKED_SEMANTICALLY
         else:

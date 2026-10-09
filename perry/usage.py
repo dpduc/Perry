@@ -176,6 +176,28 @@ def turn_tokens(turn_id: str) -> int:
     return int(row["tokens"])
 
 
+def turn_usage(turn_id: str) -> Usage:
+    """Everything recorded for the Turn `turn_id`."""
+    with db.pool().connection() as conn:
+        row = conn.execute(
+            "SELECT coalesce(sum(input_tokens + output_tokens), 0) AS tokens, "
+            "coalesce(sum(cost_usd), 0) AS cost FROM usage_ledger WHERE turn_id = %s",
+            (turn_id,),
+        ).fetchone()
+    return Usage(int(row["tokens"]), float(row["cost"]))
+
+
+def turn_models(turn_id: str, excluding_kinds: tuple[str, ...] = ()) -> list[str]:
+    """The models the Turn `turn_id` called, sorted, leaving out calls of `excluding_kinds`."""
+    with db.pool().connection() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT model FROM usage_ledger "
+            "WHERE turn_id = %s AND NOT (kind = ANY(%s)) ORDER BY model",
+            (turn_id, list(excluding_kinds)),
+        ).fetchall()
+    return [row["model"] for row in rows]
+
+
 def since(start: datetime, kind: str | None = None) -> Usage:
     """Everything recorded from `start` (timezone-aware) until now, optionally of one kind."""
     with db.pool().connection() as conn:

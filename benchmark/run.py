@@ -4,6 +4,10 @@
     uv run python -m benchmark.run perry           # ingest + answer with Perry
     uv run python -m benchmark.run report          # score both -> results/RESULTS.md
     uv run python -m benchmark.run perry-retrieval # no chat model: page recall of hybrid search
+    uv run python -m benchmark.run grid [--only SETUP,...] [--rerun]
+                                    # every Retrieval Technique forced and every picking
+                                    # mode -> results/grid.jsonl and results/GRID.md
+    uv run python -m benchmark.run grid-report     # redraw results/GRID.md, no model calls
 
 Answers are appended to results/answers-<system>.jsonl as they arrive. A run that
 stops (e.g. the daily quota runs out) resumes from the first unanswered question.
@@ -13,6 +17,7 @@ if it is not checked out next to Perry. Its graph is stored under
 benchmark/.storage/, so the QA-bot checkout itself is never written to.
 """
 
+import argparse
 import json
 import os
 import subprocess
@@ -279,9 +284,53 @@ def run_qabot(questions: list[Question]) -> None:
     answer_all(questions, ask_qabot, answers_path("qabot"))
 
 
-def main(command: str) -> None:
+def run_grid(questions: list[Question], only: list[str] | None, rerun: bool) -> None:
+    """The technique grid (see benchmark/grid.py) in the benchmark's own database. The
+    table is redrawn even when the run stops early, so what was answered is shown."""
+    _use_benchmark_database()
+    from benchmark import grid
+
+    setups = grid.select(only)
+    try:
+        grid.prepare(setups, sorted(DOCUMENTS_DIR.glob("*.pdf")))
+    except grid.NotReady as not_ready:
+        sys.exit(f"Not started: {not_ready}")
+    try:
+        grid.run_grid(questions, setups, RESULTS_DIR / "grid.jsonl", grid.ask_perry, rerun=rerun)
+    finally:
+        print(write_grid_report(questions).split("## Correct per")[0])
+
+
+def write_grid_report(questions: list[Question]) -> str:
+    from benchmark import grid
+
+    report = grid.render_grid(questions, grid.load_grid(RESULTS_DIR / "grid.jsonl"))
+    (RESULTS_DIR / "GRID.md").write_text(report, encoding="utf-8")
+    return report
+
+
+def main(argv: list[str]) -> None:
+    parser = argparse.ArgumentParser(prog="benchmark.run", usage=__doc__)
+    parser.add_argument(
+        "command", choices=("perry", "qabot", "perry-retrieval", "report", "grid", "grid-report")
+    )
+    parser.add_argument(
+        "--only",
+        help="grid: comma-separated setups (technique names, semantic, logical, cascade, "
+        "always-hybrid); the rest of the grid's rows are kept",
+    )
+    parser.add_argument(
+        "--rerun", action="store_true", help="grid: ask the selected setups afresh"
+    )
+    args = parser.parse_args(argv)
+    command = args.command
     questions = load_questions(QUESTIONS_PATH)
-    if command == "perry":
+    if command == "grid":
+        only = [name.strip() for name in args.only.split(",")] if args.only else None
+        run_grid(questions, only, args.rerun)
+    elif command == "grid-report":
+        print(write_grid_report(questions))
+    elif command == "perry":
         run_perry(questions)
     elif command == "qabot":
         run_qabot(questions)
@@ -295,11 +344,7 @@ def main(command: str) -> None:
         report = render_report(questions, answers)
         (RESULTS_DIR / "RESULTS.md").write_text(report, encoding="utf-8")
         print(report.split("## Per question\n")[0])
-    else:
-        sys.exit(__doc__)
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        sys.exit(__doc__)
-    main(sys.argv[1])
+    main(sys.argv[1:])

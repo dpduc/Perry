@@ -171,6 +171,30 @@ Manual check against the test account: add a few events for tomorrow and a few e
 
 `benchmark/` runs the same 23 questions against Perry and the predecessor QA-bot (LightRAG) over the Documents in `benchmark/documents/`, and scores correctness and Citation accuracy per question type. See the docstring of `benchmark/run.py` for the commands; results land in `benchmark/results/`.
 
+### Technique grid
+
+The grid asks the same 23 questions with every Retrieval Technique forced (10 setups) and every picking mode (`semantic`, `logical`, `cascade`), so you can see which technique wins on which question type. Always-hybrid (Perry before Retrieval Techniques) is exactly `hybrid_search` forced, so it is that row, run and paid for once. It runs in its own database, `perry_benchmark`, so it never touches your Documents or your Daily Cap.
+
+```bash
+docker compose up -d
+ollama serve            # with qwen3:8b pulled: Summaries and RAPTOR trees, free but slow
+uv run python -m benchmark.run grid
+```
+
+The full grid is 299 Knowledge Agent Turns on the paid key (about $1–3 on Flash; the free tier can't run it). Before asking anything, the run gets the benchmark Documents ready: it ingests them, brings the ColBERT index in step with Postgres, and, when a setup may search Summaries (`document_summaries`, `raptor` or any picking mode), writes every Summary and RAPTOR tree on the local model. That takes minutes per Document on a CPU, once; later runs reuse them. If Ollama isn't running or a Document fails to summarise, the run stops before spending anything and says why.
+
+Limit a run to some setups, e.g. after changing one technique:
+
+```bash
+uv run python -m benchmark.run grid --only hyde,cascade           # fill in missing rows
+uv run python -m benchmark.run grid --only hyde --rerun           # ask hyde afresh
+uv run python -m benchmark.run grid-report                        # redraw the table only
+```
+
+`--only` takes technique names, picking modes and `always-hybrid`. Other setups' rows are kept. Rows are saved to `benchmark/results/grid.jsonl` as they arrive, so a run that stops (e.g. quota) resumes where it stopped; `--rerun` drops the selected setups' rows first.
+
+**Reading the table** (`benchmark/results/GRID.md`): *Overall* has one line per setup, with how many questions it answered, *Correct* (every expected fact present), fact recall, *Citation recall* (share of required pages cited), *Citation precision* (share of cited pages that are right), cost per question and in total (from the Usage Ledger: paid calls only cost; local ones are free), and the model and run date of its rows. A setup whose date is older than a change you made is stale: rerun it. The *per question type* tables show the same measures for lookup, multi-hop, thematic and entity questions, which is where techniques differ. *Per question* shows each setup's fact recall per question, with `c` when every required page is cited. Picking-mode rows also record, in `grid.jsonl`, which technique the mode chose for each question (`found_with`).
+
 ## Settings
 
 All optional; add any of these to `.env` to override the default.

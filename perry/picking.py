@@ -41,10 +41,15 @@ def cascade_margin() -> float:
     return float(os.getenv("PERRY_CASCADE_MARGIN", str(DEFAULT_CASCADE_MARGIN)))
 
 
-def pick(question: str, candidates: list[Technique]) -> Technique | None:
+def pick(
+    question: str, candidates: list[Technique], picking_mode: str | None = None
+) -> Technique | None:
     """The technique semantic picking settles on for `question`, or None to leave the
-    choice to the Knowledge Agent's model (logical picking)."""
-    picking = mode()
+    choice to the Knowledge Agent's model (logical picking). `picking_mode` overrides
+    the setting (the benchmark compares the modes)."""
+    picking = picking_mode or mode()
+    if picking not in MODES:
+        raise ValueError(f"The picking mode must be one of {MODES}, not {picking!r}")
     if picking == LOGICAL or not candidates:
         return None
     if len(candidates) == 1:
