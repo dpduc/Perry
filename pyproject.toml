@@ -15,9 +15,20 @@ dependencies = [
     "pandas>=3.0.6",
     "pgvector>=0.5.0",
     "psycopg[binary,pool]>=3.3.6",
+    "pylate>=1.6.0",
     "pymupdf>=1.28.2",
     "python-dotenv>=1.2.4",
+    "torch>=2.11.0",
 ]
+
+# ColBERT runs on the CPU: without this, uv pulls the ~2.5 GB CUDA build of torch.
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [dependency-groups]
 dev = [

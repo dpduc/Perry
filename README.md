@@ -8,7 +8,7 @@ A personal multi-agent assistant that runs on your own machine. You talk to one 
 
 | Agent | What it does for you |
 |---|---|
-| **Knowledge Agent** | Answers questions from the Documents you upload (PDF, Markdown, text) and cites the exact page each claim came from. Picks a Retrieval Technique per question (today: hybrid search, pgvector + Postgres full-text) and says which one it used. Scanned PDF pages with no text are read by the vision model at upload. |
+| **Knowledge Agent** | Answers questions from the Documents you upload (PDF, Markdown, text) and cites the exact page each claim came from. Picks a Retrieval Technique per question (e.g. hybrid search, pgvector + Postgres full-text; or ColBERT, a local late-interaction model with its own on-disk index, for exact names and rare terms) and says which one it used. Scanned PDF pages with no text are read by the vision model at upload. |
 | **Analysis Agent** | Answers questions about your Datasets (CSV, or each sheet of an XLSX). It writes read-only SQL and shows you the query it ran. When SQL isn't enough (statistics, forecasts, charts) it writes Python that runs in a locked-down Docker **Sandbox**, and the charts appear in the chat. |
 | **Task Agent** | Reads your Google Calendar and Gmail freely. Anything that changes something or reaches another person (send, reply, create, move or delete an event) waits for you on a **Confirmation card**, where you approve, edit the fields, or reject with a note. |
 
@@ -179,6 +179,7 @@ All optional; add any of these to `.env` to override the default.
 | `PERRY_RETRY_DELAY_SECONDS` | `2` | Wait before a failed step's one retry |
 | `PERRY_TURN_TOKEN_CEILING` | `50000` | A Turn stops and reports its findings past this many tokens |
 | `PERRY_DAILY_CAP_USD` | `1.00` | New Turns and ingestion are refused past this until local midnight |
+| `PERRY_COLBERT_MODEL` | `answerdotai/answerai-colbert-small-v1` | Local model for the ColBERT Retrieval Technique (downloaded on first use, runs on the CPU); changing it re-encodes every Chunk at next start; empty turns ColBERT off |
 | `PERRY_SHOW_FOUND_WITH` | `true` | End answers from your Documents with the "Found with" line naming the Retrieval Technique; `false` turns it off |
 | `PERRY_PRICES_FILE` | `prices.toml` | Price table, USD per million tokens per model |
 | `PERRY_ANALYST_PASSWORD` | `perry_analyst` | Password of the read-only `perry_analyst` role |
@@ -188,7 +189,7 @@ All optional; add any of these to `.env` to override the default.
 | `PERRY_SANDBOX_MEMORY` | `1g` | Sandbox memory limit |
 | `PERRY_SANDBOX_CPUS` | `1` | Sandbox CPU limit |
 | `PERRY_SANDBOX_INPUT_ROW_LIMIT` | `100000` | Rows per input file written for a script |
-| `PERRY_APP_DATA_DIR` | `%APPDATA%\Perry` | Holds `google_token.json` and saved charts |
+| `PERRY_APP_DATA_DIR` | `%APPDATA%\Perry` | Holds `google_token.json`, saved charts and the ColBERT index (`colbert\`) |
 | `PERRY_GOOGLE_CLIENT_FILE` | `<app-data>\google_client.json` | Google OAuth client file |
 
 ## Notes
@@ -196,5 +197,6 @@ All optional; add any of these to `.env` to override the default.
 - **Speed on the free tier:** Gemini Flash allows 5 requests/minute, and Perry paces itself to 4. A Turn makes 3-6 model calls, so expect about 1-2 minutes per answer.
 - **Privacy:** on the free tier, Google may use what you send to improve its products. Don't upload anything confidential.
 - **Scanned PDF pages** (no extractable text) are rendered to images and transcribed by the vision model (the chat model, `PERRY_LLM_MODEL`), then cited by page like any other. The estimate shown before ingesting includes one transcription per such page, and the calls count toward usage. A page whose transcription fails is listed after upload.
+- **ColBERT** keeps its own index under `<app-data>\colbert`, beside Postgres (docs/adr/0002). Every upload updates both before it returns, and a failed upload leaves both as they were. Uploads take a little longer while ColBERT encodes the text on the CPU (roughly 7 Chunks a second), and the first one downloads the model (~130 MB). At start, Perry encodes any Chunks stored before ColBERT existed and rebuilds the index if it doesn't match Postgres; deleting the folder is safe.
 - **Changing the embedding model** or its dimension means re-ingesting every Document.
 - **Usage:** every model call is recorded with its tokens and cost (the sidebar shows today's totals). Prices live in `prices.toml`; edit it to match current pricing. A Turn stops at `PERRY_TURN_TOKEN_CEILING` tokens (default 50,000) and reports what it found so far. Embedding tokens are estimated (about 4 characters per token), since the Gemini API doesn't report them. Once today's cost reaches `PERRY_DAILY_CAP_USD` (default $1), new Turns are refused until local midnight; a Turn already running always finishes. Uploads count toward the cap too: they show an estimate and wait for your OK, and are refused up front if they would go over.

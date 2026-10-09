@@ -14,6 +14,7 @@ from dataclasses import dataclass
 
 from langchain_core.runnables import Runnable, chain
 
+from perry import colbert as colbert_index
 from perry.search import SearchHit, hybrid_search
 
 
@@ -40,6 +41,13 @@ def hybrid(question: str) -> list[SearchHit]:
     return hybrid_search(question)
 
 
+@chain
+def colbert(question: str) -> list[SearchHit]:
+    """Late interaction: every word of the question matched against every word of each
+    Chunk, over ColBERT's own index (docs/adr/0002)."""
+    return colbert_index.search(question)
+
+
 TECHNIQUES: tuple[Technique, ...] = (
     Technique(
         name="hybrid_search",
@@ -56,6 +64,23 @@ TECHNIQUES: tuple[Technique, ...] = (
             "When is the next team offsite?",
         ),
         chain=hybrid,
+    ),
+    Technique(
+        name="colbert",
+        label="ColBERT",
+        description=(
+            "Search the user's Documents matching the question word by word against "
+            "every passage. Best when the question hinges on an exact name, code, "
+            "product or rare term that must appear in the passage."
+        ),
+        examples=(
+            "What does the Orion-4 maintenance log say about the hydraulic pump?",
+            "Which clause mentions the Fennick Holdings guarantee?",
+            "Where is invoice INV-20931 referenced?",
+            "What did Dr. Okonkwo-Lindqvist recommend in her review?",
+            "Which document mentions the term thermocline drift?",
+        ),
+        chain=colbert,
     ),
 )
 

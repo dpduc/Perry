@@ -7,6 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+import numpy as np
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
@@ -153,14 +154,40 @@ class FakeVision:
         return Transcription(reply, self.model, 300, 50)
 
 
+class FakeColbert:
+    """A deterministic ColBERT encoder: one fixed unit vector per word, so a Chunk scores
+    the number of the question's words it contains. Works with the real on-disk index."""
+
+    model = "fake-colbert"
+    dimensions = 96
+
+    def encode_documents(self, texts: list[str]) -> list[np.ndarray]:
+        return [self._vectors(text) for text in texts]
+
+    def encode_query(self, text: str) -> np.ndarray:
+        return self._vectors(text)
+
+    def _vectors(self, text: str) -> np.ndarray:
+        rows = []
+        for word in re.findall(r"\w+", text.lower()):
+            seed = int(hashlib.md5(word.encode()).hexdigest()[:8], 16)
+            vector = np.random.default_rng(seed).standard_normal(self.dimensions)
+            rows.append(vector / np.linalg.norm(vector))
+        if not rows:
+            return np.zeros((1, self.dimensions), np.float32)
+        return np.stack(rows).astype(np.float32)
+
+
 def fake_provider(
     chat: ScriptedChatModel,
     *,
     speech: bool = True,
     local: bool = False,
     vision: FakeVision | None = None,
+    colbert: FakeColbert | None = None,
 ) -> Provider:
-    """Fake models; `local=True` makes text generation count as local (for privacy checks)."""
+    """Fake models; `local=True` makes text generation count as local (for privacy checks).
+    Without `colbert`, ingestion leaves the ColBERT index alone (and skips loading torch)."""
     vision = vision or FakeVision()
     return Provider(
         chat_model=lambda: chat,
@@ -172,4 +199,5 @@ def fake_provider(
         read_image=vision,
         vision_model=vision.model,
         local_text_generation=local,
+        colbert=colbert,
     )

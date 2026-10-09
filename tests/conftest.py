@@ -17,6 +17,9 @@ os.environ["DATABASE_URL"] = TEST_URL
 os.environ["LANGCHAIN_TRACING_V2"] = "false"
 os.environ["LANGSMITH_TRACING"] = "false"
 os.environ["PERRY_RETRY_DELAY_SECONDS"] = "0"
+# No real ColBERT model (torch, and an index in the real app-data folder) unless a test
+# asks for one; tests that need ColBERT use the fake encoder.
+os.environ["PERRY_COLBERT_MODEL"] = ""
 
 from fakes import ScriptedChatModel, fake_embed, fake_provider
 
