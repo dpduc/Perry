@@ -14,9 +14,11 @@ import os
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from functools import cache
+from functools import cache, cached_property
+from typing import Protocol
 
 import httpx
+import numpy as np
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.exceptions import ModelError
 from langchain_core.language_models import BaseChatModel
@@ -52,6 +54,10 @@ SUMMARY_MODEL = os.getenv("PERRY_SUMMARY_MODEL", "qwen3:8b")
 OLLAMA_URL = os.getenv("PERRY_OLLAMA_URL", "http://127.0.0.1:11434")
 # Ollama's default context is 4096 tokens and silently cuts longer prompts.
 SUMMARY_CONTEXT_TOKENS = int(os.getenv("PERRY_SUMMARY_CONTEXT_TOKENS", "8192"))
+# The local late-interaction model behind the ColBERT Retrieval Technique (ADR-0002).
+# Changing it re-encodes every Chunk when Perry next starts. Empty turns ColBERT off.
+DEFAULT_COLBERT_MODEL = "answerdotai/answerai-colbert-small-v1"
+COLBERT_MODEL = os.getenv("PERRY_COLBERT_MODEL", DEFAULT_COLBERT_MODEL).strip()
 
 # pgvector's HNSW index supports at most 2000 dimensions.
 # Changing the model or this number means re-ingesting every Document.
@@ -76,6 +82,38 @@ class Speech:
     model: str
     input_tokens: int
     output_tokens: int
+
+
+class ColbertEncoder(Protocol):
+    """Turns text into ColBERT token vectors: one row per token, for late interaction."""
+
+    model: str  # the name the usage ledger records (and prices) its calls by
+
+    def encode_documents(self, texts: list[str]) -> list[np.ndarray]: ...
+
+    def encode_query(self, text: str) -> np.ndarray: ...
+
+
+class LocalColbert:
+    """A ColBERT model run on this machine's CPU with PyLate. Loaded on first use: importing
+    torch takes tens of seconds, and the first use downloads the model (~130 MB)."""
+
+    def __init__(self, model: str = DEFAULT_COLBERT_MODEL):
+        self.model = model
+
+    def encode_documents(self, texts: list[str]) -> list[np.ndarray]:
+        return list(self._loaded.encode(texts, is_query=False, show_progress_bar=False))
+
+    def encode_query(self, text: str) -> np.ndarray:
+        return self._loaded.encode([text], is_query=True, show_progress_bar=False)[0]
+
+    @cached_property
+    def _loaded(self):
+        os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+        from pylate import models as pylate_models
+
+        # 512 tokens (the model's maximum) so no Chunk is cut short; the default is 300.
+        return pylate_models.ColBERT(self.model, device="cpu", document_length=512)
 
 
 class SpeechUnavailable(Exception):
@@ -113,6 +151,9 @@ class Provider:
     # background, if the provider has one, and the name the usage ledger prices it by.
     summary_model: Callable[[], BaseChatModel] | None = None
     summary_model_name: str = "unknown"
+    # The ColBERT encoder, if there is one. Without it, ingestion leaves the ColBERT
+    # index alone and the ColBERT Retrieval Technique finds nothing.
+    colbert: ColbertEncoder | None = None
 
 
 @cache
@@ -156,6 +197,7 @@ def _gemini() -> Provider:
         vision_model=LLM_MODEL,
         summary_model=_ollama_summary_model,
         summary_model_name=SUMMARY_MODEL,
+        colbert=LocalColbert(COLBERT_MODEL) if COLBERT_MODEL else None,
     )
 
 
@@ -359,6 +401,44 @@ def vision_supported() -> bool:
 def vision_model() -> str:
     """The name the usage ledger prices vision calls by."""
     return _provider().vision_model
+
+
+def colbert_supported() -> bool:
+    """Whether the current provider has a ColBERT encoder."""
+    return _provider().colbert is not None
+
+
+def colbert_model() -> str:
+    """The name the usage ledger records ColBERT calls by."""
+    colbert = _provider().colbert
+    return colbert.model if colbert is not None else "unknown"
+
+
+def colbert_encode_documents(texts: list[str]) -> list[np.ndarray]:
+    """Each text's ColBERT token vectors (rows: tokens), for the ColBERT index."""
+    _record_colbert(texts)
+    return [np.asarray(v, np.float32) for v in _colbert().encode_documents(texts)]
+
+
+def colbert_encode_query(text: str) -> np.ndarray:
+    """The question's ColBERT token vectors, to search the ColBERT index with."""
+    _record_colbert([text])
+    return np.asarray(_colbert().encode_query(text), np.float32)
+
+
+def _colbert() -> ColbertEncoder:
+    colbert = _provider().colbert
+    if colbert is None:
+        raise RuntimeError("This model provider has no ColBERT encoder.")
+    return colbert
+
+
+def _record_colbert(texts: list[str]) -> None:
+    # Local and free (priced 0 in prices.toml), but every model call is in the ledger.
+    from perry import usage
+
+    usage.check_turn_ceiling()
+    usage.record("colbert", colbert_model(), estimate_tokens(texts))
 
 
 # What transcribing one scanned page is expected to cost, for estimates made before

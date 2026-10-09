@@ -32,6 +32,9 @@ CREATE TABLE IF NOT EXISTS chunks (
     embedding   vector({EMBEDDING_DIMENSIONS}) NOT NULL,
     tsv         tsvector GENERATED ALWAYS AS (to_tsvector('english', text)) STORED
 );
+-- Each Chunk's ColBERT token vectors (a NumPy .npy array, one row per token): the
+-- source the on-disk ColBERT index is built from (docs/adr/0002).
+ALTER TABLE chunks ADD COLUMN IF NOT EXISTS colbert bytea;
 CREATE INDEX IF NOT EXISTS chunks_embedding_idx ON chunks USING hnsw (embedding vector_cosine_ops);
 CREATE INDEX IF NOT EXISTS chunks_tsv_idx ON chunks USING gin (tsv);
 

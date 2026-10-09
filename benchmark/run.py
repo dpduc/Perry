@@ -192,10 +192,11 @@ def _use_benchmark_database() -> None:
 
 def ingest_perry() -> None:
     _use_benchmark_database()
-    from perry import db
+    from perry import colbert, db
     from perry.ingest import ingest_file
 
     db.init_schema()
+    colbert.ensure_in_step()  # Documents stored before ColBERT existed
     for path in sorted(DOCUMENTS_DIR.glob("*.pdf")):
         print(ingest_file(path).describe(), flush=True)
 

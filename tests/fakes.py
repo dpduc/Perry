@@ -8,6 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+import numpy as np
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
@@ -189,6 +190,28 @@ class FakeSummaryModel(BaseChatModel):
             usage_metadata={"input_tokens": 100, "output_tokens": 20, "total_tokens": 120},
         )
         return ChatResult(generations=[ChatGeneration(message=message)])
+class FakeColbert:
+    """A deterministic ColBERT encoder: one fixed unit vector per word, so a Chunk scores
+    the number of the question's words it contains. Works with the real on-disk index."""
+
+    model = "fake-colbert"
+    dimensions = 96
+
+    def encode_documents(self, texts: list[str]) -> list[np.ndarray]:
+        return [self._vectors(text) for text in texts]
+
+    def encode_query(self, text: str) -> np.ndarray:
+        return self._vectors(text)
+
+    def _vectors(self, text: str) -> np.ndarray:
+        rows = []
+        for word in re.findall(r"\w+", text.lower()):
+            seed = int(hashlib.md5(word.encode()).hexdigest()[:8], 16)
+            vector = np.random.default_rng(seed).standard_normal(self.dimensions)
+            rows.append(vector / np.linalg.norm(vector))
+        if not rows:
+            return np.zeros((1, self.dimensions), np.float32)
+        return np.stack(rows).astype(np.float32)
 
 
 def fake_provider(
@@ -198,9 +221,11 @@ def fake_provider(
     local: bool = False,
     vision: FakeVision | None = None,
     summary: FakeSummaryModel | None = None,
+    colbert: FakeColbert | None = None,
 ) -> Provider:
     """Fake models; `local=True` makes text generation count as local (for privacy checks).
-    Only with a `summary` model can the provider write Summaries."""
+    Only with a `summary` model can the provider write Summaries. Without `colbert`,
+    ingestion leaves the ColBERT index alone (and skips loading torch)."""
     vision = vision or FakeVision()
     return Provider(
         chat_model=lambda: chat,
@@ -214,4 +239,5 @@ def fake_provider(
         local_text_generation=local,
         summary_model=(lambda: summary) if summary else None,
         summary_model_name=summary.model if summary else "unknown",
+        colbert=colbert,
     )

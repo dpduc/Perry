@@ -86,7 +86,7 @@ def _create_database() -> None:
 
 def _load_documents() -> None:
     """Make the eval database hold exactly `evals/documents/` (unchanged files cost nothing)."""
-    from perry import db
+    from perry import colbert, db
     from perry.ingest import ingest_file
 
     files = sorted(DOCUMENTS_DIR.iterdir())
@@ -94,6 +94,7 @@ def _load_documents() -> None:
         conn.execute(
             "DELETE FROM documents WHERE NOT (name = ANY(%s))", ([f.name for f in files],)
         )
+    colbert.ensure_in_step()  # drops the deleted Documents from the ColBERT index too
     for file in files:
         print(ingest_file(file).describe())
 

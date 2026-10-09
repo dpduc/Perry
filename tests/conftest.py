@@ -20,6 +20,9 @@ os.environ["PERRY_RETRY_DELAY_SECONDS"] = "0"
 # Turns script which technique tool the Knowledge Agent calls, so by default its model
 # picks (logically). Tests of semantic and cascade picking set the mode themselves.
 os.environ["PERRY_PICKING_MODE"] = "logical"
+# No real ColBERT model (torch, and an index in the real app-data folder) unless a test
+# asks for one; tests that need ColBERT use the fake encoder.
+os.environ["PERRY_COLBERT_MODEL"] = ""
 
 from fakes import ScriptedChatModel, fake_embed, fake_provider
 

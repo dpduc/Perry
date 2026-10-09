@@ -14,7 +14,7 @@ from pathlib import Path
 
 from pgvector import Vector
 
-from perry import db, models, summaries, usage
+from perry import colbert, db, models, summaries, usage
 from perry.documents import (
     Chunk,
     ParsedDocument,
@@ -120,6 +120,8 @@ def estimate_file(path: Path) -> list[EstimatedCall] | None:
             embedding_tokens += models.PAGE_TRANSCRIPTION_OUTPUT_TOKENS
     if embedding_tokens:
         calls.append(EstimatedCall("embedding", models.embedding_model(), embedding_tokens))
+        if models.colbert_supported():  # the same text, encoded locally for ColBERT
+            calls.append(EstimatedCall("colbert", models.colbert_model(), embedding_tokens))
     return calls
 
 
@@ -179,20 +181,43 @@ def ingest_file(path: Path, *, embed=models.embed_documents) -> IngestResult:
     # Call the models before touching the database, so a failed call leaves the old version intact.
     transcribed, untranscribed = _transcribe_pages(path, parsed)
     chunks = sorted([*parsed.chunks, *transcribed], key=lambda chunk: chunk.page)
-    embeddings = embed([c.text for c in chunks]) if chunks else []
+    texts = [c.text for c in chunks]
+    embeddings = embed(texts) if chunks else []
+    late = models.colbert_encode_documents(texts) if chunks and models.colbert_supported() else None
 
-    with db.pool().connection() as conn, conn.transaction():
+    # Postgres and the ColBERT index change together, or neither does (docs/adr/0002).
+    with colbert.update() as index, db.pool().connection() as conn, conn.transaction():
         conn.execute("DELETE FROM documents WHERE name = %s", (parsed.name,))
         document_id = conn.execute(
             "INSERT INTO documents (name, content_hash) VALUES (%s, %s) RETURNING id",
             (parsed.name, parsed.content_hash),
         ).fetchone()["id"]
+        chunk_ids = [
+            row["id"]
+            for row in conn.execute(
+                "SELECT nextval(pg_get_serial_sequence('chunks', 'id')) AS id "
+                "FROM generate_series(1, %s)",
+                (len(chunks),),
+            )
+        ]
+        if late is not None:
+            index.stage(conn, zip(chunk_ids, late, strict=True))
         with conn.cursor() as cur:
             cur.executemany(
-                "INSERT INTO chunks (document_id, page, text, embedding) VALUES (%s, %s, %s, %s)",
+                "INSERT INTO chunks (id, document_id, page, text, embedding, colbert) "
+                "VALUES (%s, %s, %s, %s, %s, %s)",
                 [
-                    (document_id, chunk.page, chunk.text, Vector(embedding))
-                    for chunk, embedding in zip(chunks, embeddings, strict=True)
+                    (
+                        chunk_id,
+                        document_id,
+                        chunk.page,
+                        chunk.text,
+                        Vector(embedding),
+                        colbert.to_bytes(vectors) if vectors is not None else None,
+                    )
+                    for chunk_id, chunk, embedding, vectors in zip(
+                        chunk_ids, chunks, embeddings, late or [None] * len(chunks), strict=True
+                    )
                 ],
             )
 
@@ -259,6 +284,7 @@ def main(argv: list[str] | None = None, *, ask=input) -> None:
     args = parser.parse_args(argv)
 
     db.init_schema()
+    colbert.ensure_in_step()
     path = Path(args.target)
     files = [path] if path.is_file() else find_files(path)
     if not files:

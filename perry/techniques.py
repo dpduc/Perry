@@ -16,6 +16,7 @@ from itertools import zip_longest
 
 from langchain_core.runnables import Runnable, chain
 
+from perry import colbert as colbert_index
 from perry import models, summaries
 from perry.search import RRF_K, SearchHit, hybrid_search, summary_search
 from perry.self_query import self_query
@@ -193,6 +194,13 @@ def document_summaries(question: str) -> list[SearchHit]:
     return summary_search(question)
 
 
+@chain
+def colbert(question: str) -> list[SearchHit]:
+    """Late interaction: every word of the question matched against every word of each
+    Chunk, over ColBERT's own index (docs/adr/0002)."""
+    return colbert_index.search(question)
+
+
 TECHNIQUES: tuple[Technique, ...] = (
     Technique(
         name="hybrid_search",
@@ -333,6 +341,23 @@ TECHNIQUES: tuple[Technique, ...] = (
             "Which deadlines are mentioned in my markdown notes on fundraising?",
         ),
         chain=self_query,
+    ),
+    Technique(
+        name="colbert",
+        label="ColBERT",
+        description=(
+            "Search the user's Documents matching the question word by word against "
+            "every passage. Best when the question hinges on an exact name, code, "
+            "product or rare term that must appear in the passage."
+        ),
+        examples=(
+            "What does the Orion-4 maintenance log say about the hydraulic pump?",
+            "Which clause mentions the Fennick Holdings guarantee?",
+            "Where is invoice INV-20931 referenced?",
+            "What did Dr. Okonkwo-Lindqvist recommend in her review?",
+            "Which document mentions the term thermocline drift?",
+        ),
+        chain=colbert,
     ),
 )
 

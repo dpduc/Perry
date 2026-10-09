@@ -2,6 +2,7 @@
 
 import pytest
 from fakes import (
+    FakeColbert,
     FakeSummaryModel,
     ScriptedChatModel,
     fake_embed,
@@ -15,20 +16,22 @@ from perry.techniques import TECHNIQUES
 
 
 @pytest.mark.parametrize("technique", TECHNIQUES, ids=lambda t: t.name)
-def test_technique_returns_chunks_with_page_citations(database, tmp_path, technique):
+def test_technique_returns_chunks_with_page_citations(
+    database, tmp_path, monkeypatch, technique
+):
+    monkeypatch.setenv("PERRY_APP_DATA_DIR", str(tmp_path / "app-data"))
     (tmp_path / "budget.md").write_text(
         "The marketing budget for Q3 is 40,000 dollars.", encoding="utf-8"
     )
     (tmp_path / "hiking.md").write_text(
         "Trail notes: the ridge path is steep after the waterfall.", encoding="utf-8"
     )
-    for name in ("budget.md", "hiking.md"):
-        ingest_file(tmp_path / name, embed=fake_embed)
-
     # A technique that asks the model (e.g. to rewrite the question) gets the question back.
     restated = ["What is the Q3 marketing budget?"] * 5
     chat, summary = ScriptedChatModel(steps=restated), FakeSummaryModel()
-    with models.use(fake_provider(chat, summary=summary)):
+    with models.use(fake_provider(chat, summary=summary, colbert=FakeColbert())):
+        for name in ("budget.md", "hiking.md"):
+            ingest_file(tmp_path / name, embed=fake_embed)
         summaries.summarise_pending()  # the background job, for Summary-based techniques
         hits = technique.chain.invoke("What is the Q3 marketing budget?")
 
