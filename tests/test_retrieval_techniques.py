@@ -1,9 +1,9 @@
 """Every registered Retrieval Technique, as a chain over a real Postgres with fake embeddings."""
 
 import pytest
-from fakes import ScriptedChatModel, fake_embed, fake_provider
+from fakes import FakeSummaryModel, ScriptedChatModel, fake_embed, fake_provider
 
-from perry import models
+from perry import models, summaries
 from perry.ingest import ingest_file
 from perry.techniques import TECHNIQUES
 
@@ -19,7 +19,8 @@ def test_technique_returns_chunks_with_page_citations(database, tmp_path, techni
     for name in ("budget.md", "hiking.md"):
         ingest_file(tmp_path / name, embed=fake_embed)
 
-    with models.use(fake_provider(ScriptedChatModel())):
+    with models.use(fake_provider(ScriptedChatModel(), summary=FakeSummaryModel())):
+        summaries.summarise_pending()  # the background job, for Summary-based techniques
         hits = technique.chain.invoke("What is the Q3 marketing budget?")
 
     assert hits[0].citation == "budget.md"

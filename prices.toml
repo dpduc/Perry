@@ -18,3 +18,9 @@ input_per_million = 0.15
 [models."gemini-2.5-flash-preview-tts"]
 input_per_million = 0.50
 output_per_million = 10.00
+
+# The local summary model (Ollama, PERRY_SUMMARY_MODEL): runs on this machine, so free.
+# Add a zero entry like this one if you switch to another local model.
+[models."qwen3:8b"]
+input_per_million = 0
+output_per_million = 0

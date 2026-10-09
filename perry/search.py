@@ -63,3 +63,55 @@ def hybrid_search(query: str, limit: int = 6, *, embed=models.embed_query) -> li
     with db.pool().connection() as conn:
         rows = conn.execute(HYBRID_SQL, params).fetchall()
     return [SearchHit(r["name"], r["page"], r["text"], float(r["score"])) for r in rows]
+
+
+# Summary search: how many Summaries may match, and how many of the best Chunks
+# beneath each one come back.
+SUMMARY_CANDIDATES = 3
+CHUNKS_PER_SUMMARY = 3
+
+SUMMARY_SQL = """
+WITH matched AS (
+    SELECT s.id, row_number() OVER (ORDER BY s.embedding <=> %(embedding)s) AS rank
+    FROM summaries s
+    LEFT JOIN documents d ON d.id = s.document_id
+    WHERE s.kind = %(kind)s AND (s.document_id IS NULL OR d.summary_status = 'ready')
+    ORDER BY s.embedding <=> %(embedding)s
+    LIMIT %(summaries)s
+),
+beneath AS (
+    SELECT DISTINCT ON (c.id) c.id, m.rank, c.embedding <=> %(embedding)s AS distance
+    FROM matched m
+    JOIN summary_chunks sc ON sc.summary_id = m.id
+    JOIN chunks c ON c.id = sc.chunk_id
+    ORDER BY c.id, m.rank
+),
+ranked AS (
+    SELECT *, row_number() OVER (PARTITION BY rank ORDER BY distance) AS place FROM beneath
+)
+SELECT d.name, c.page, c.text, 1 - r.distance AS score
+FROM ranked r
+JOIN chunks c ON c.id = r.id
+JOIN documents d ON d.id = c.document_id
+WHERE r.place <= %(per_summary)s
+ORDER BY r.rank, r.distance
+LIMIT %(limit)s
+"""
+
+
+def summary_search(
+    query: str, limit: int = 6, *, kind: str = "document", embed=models.embed_query
+) -> list[SearchHit]:
+    """The Chunks beneath the Summaries of `kind` that best match `query`: the best
+    Chunks under the best-matching Summary first. A Summary is never returned itself,
+    and the Summaries of Documents whose summarising isn't ready are skipped."""
+    params = {
+        "embedding": Vector(embed(query)),
+        "kind": kind,
+        "summaries": SUMMARY_CANDIDATES,
+        "per_summary": CHUNKS_PER_SUMMARY,
+        "limit": limit,
+    }
+    with db.pool().connection() as conn:
+        rows = conn.execute(SUMMARY_SQL, params).fetchall()
+    return [SearchHit(r["name"], r["page"], r["text"], float(r["score"])) for r in rows]

@@ -8,7 +8,7 @@ A personal multi-agent assistant that runs on your own machine. You talk to one 
 
 | Agent | What it does for you |
 |---|---|
-| **Knowledge Agent** | Answers questions from the Documents you upload (PDF, Markdown, text) and cites the exact page each claim came from. Picks a Retrieval Technique per question (today: hybrid search, pgvector + Postgres full-text) and says which one it used. Scanned PDF pages with no text are read by the vision model at upload. |
+| **Knowledge Agent** | Answers questions from the Documents you upload (PDF, Markdown, text) and cites the exact page each claim came from. Picks a Retrieval Technique per question (today: hybrid search, pgvector + Postgres full-text; and Document Summaries, written in the background by a local model) and says which one it used. Scanned PDF pages with no text are read by the vision model at upload. |
 | **Analysis Agent** | Answers questions about your Datasets (CSV, or each sheet of an XLSX). It writes read-only SQL and shows you the query it ran. When SQL isn't enough (statistics, forecasts, charts) it writes Python that runs in a locked-down Docker **Sandbox**, and the charts appear in the chat. |
 | **Task Agent** | Reads your Google Calendar and Gmail freely. Anything that changes something or reaches another person (send, reply, create, move or delete an event) waits for you on a **Confirmation card**, where you approve, edit the fields, or reject with a note. |
 
@@ -174,6 +174,9 @@ All optional; add any of these to `.env` to override the default.
 | `PERRY_EMBEDDING_MODEL` | `gemini-embedding-001` | Embedding model (changing it means re-ingesting every Document) |
 | `PERRY_TTS_MODEL` | `gemini-2.5-flash-preview-tts` | Reads voice answers aloud |
 | `PERRY_TTS_VOICE` | `Kore` | Voice for read-aloud answers |
+| `PERRY_SUMMARY_MODEL` | `qwen3:8b` | Local Ollama model that writes Summaries and extracts Document metadata in the background; give it a zero entry in `prices.toml` |
+| `PERRY_OLLAMA_URL` | `http://127.0.0.1:11434` | Where Ollama listens |
+| `PERRY_SUMMARY_CONTEXT_TOKENS` | `8192` | Context window asked of the local model (Ollama's default, 4096, cuts longer prompts) |
 | `PERRY_REQUESTS_PER_SECOND` | `0.0667` | Request pacing (4/min; the free tier allows 5/min) |
 | `DATABASE_URL` | `postgresql://perry:perry@127.0.0.1:5433/perry` | The Postgres Perry uses |
 | `PERRY_RETRY_DELAY_SECONDS` | `2` | Wait before a failed step's one retry |
@@ -196,5 +199,6 @@ All optional; add any of these to `.env` to override the default.
 - **Speed on the free tier:** Gemini Flash allows 5 requests/minute, and Perry paces itself to 4. A Turn makes 3-6 model calls, so expect about 1-2 minutes per answer.
 - **Privacy:** on the free tier, Google may use what you send to improve its products. Don't upload anything confidential.
 - **Scanned PDF pages** (no extractable text) are rendered to images and transcribed by the vision model (the chat model, `PERRY_LLM_MODEL`), then cited by page like any other. The estimate shown before ingesting includes one transcription per such page, and the calls count toward usage. A page whose transcription fails is listed after upload.
+- **Summaries (local model):** after an upload returns, a background job asks the local model (Ollama, `PERRY_SUMMARY_MODEL`, default `qwen3:8b`: `ollama pull qwen3:8b`) for one Summary per Document plus its date and topic, reading the start of the Document (about 2,500 tokens). On a CPU this takes minutes per Document; the sidebar shows "Summarising N Documents…" meanwhile, and the Document Summaries technique skips Documents that aren't ready. If Ollama isn't running, the Document stays searchable, is marked failed, and is retried on the next start. The upload estimate counts the local calls as free (only embedding the Summary is paid). The `python -m perry.ingest` CLI doesn't summarise; the app does it for pending Documents when it next starts.
 - **Changing the embedding model** or its dimension means re-ingesting every Document.
 - **Usage:** every model call is recorded with its tokens and cost (the sidebar shows today's totals). Prices live in `prices.toml`; edit it to match current pricing. A Turn stops at `PERRY_TURN_TOKEN_CEILING` tokens (default 50,000) and reports what it found so far. Embedding tokens are estimated (about 4 characters per token), since the Gemini API doesn't report them. Once today's cost reaches `PERRY_DAILY_CAP_USD` (default $1), new Turns are refused until local midnight; a Turn already running always finishes. Uploads count toward the cap too: they show an estimate and wait for your OK, and are refused up front if they would go over.

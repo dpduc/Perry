@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 from langchain_core.runnables import Runnable, chain
 
-from perry.search import SearchHit, hybrid_search
+from perry.search import SearchHit, hybrid_search, summary_search
 
 
 @dataclass(frozen=True)
@@ -40,6 +40,14 @@ def hybrid(question: str) -> list[SearchHit]:
     return hybrid_search(question)
 
 
+@chain
+def document_summaries(question: str) -> list[SearchHit]:
+    """Multi-representation indexing: match the question against Document Summaries
+    (only Documents whose Summaries are ready), then return those Documents' best
+    Chunks. A Summary is never returned, so never cited."""
+    return summary_search(question)
+
+
 TECHNIQUES: tuple[Technique, ...] = (
     Technique(
         name="hybrid_search",
@@ -56,6 +64,23 @@ TECHNIQUES: tuple[Technique, ...] = (
             "When is the next team offsite?",
         ),
         chain=hybrid,
+    ),
+    Technique(
+        name="document_summaries",
+        label="Document Summaries",
+        description=(
+            "Find the Documents whose Summaries best match the question, then return "
+            "their best-matching passages. Best for finding which Document covers a "
+            "subject, or questions about what a Document as a whole is about."
+        ),
+        examples=(
+            "Which document talks about the office move?",
+            "Do I have any file about the insurance renewal?",
+            "Where did I write down the onboarding process?",
+            "Which of my notes covers the pricing discussion?",
+            "What is the vendor evaluation report about?",
+        ),
+        chain=document_summaries,
     ),
 )
 
