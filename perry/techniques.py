@@ -18,6 +18,7 @@ from langchain_core.runnables import Runnable, chain
 
 from perry import models, summaries
 from perry.search import RRF_K, SearchHit, hybrid_search, summary_search
+from perry.self_query import self_query
 
 
 @dataclass(frozen=True)
@@ -340,6 +341,25 @@ TECHNIQUES: tuple[Technique, ...] = (
         ),
         chain=raptor,
         needs_summaries=True,
+    ),
+    Technique(
+        name="self_query",
+        label="Self-query",
+        description=(
+            "Turn the question into a filter on which Documents to search (by name, file "
+            "type, upload date, page, Document date or topic) plus a search query. Best "
+            "when the question limits itself to certain Documents, e.g. 'in the 2025 "
+            "budget notes', 'in my PDFs', 'on page 3', or 'in documents from last year'."
+        ),
+        examples=(
+            "In the 2023 lease agreement, what is the monthly rent?",
+            "What do my PDF files say about overtime pay?",
+            "According to the travel policy document, page 4, who signs off on flights?",
+            "What did the documents I uploaded last week say about the new hire?",
+            "In the meeting notes from March 2024, what was decided about the logo?",
+            "Which deadlines are mentioned in my markdown notes on fundraising?",
+        ),
+        chain=self_query,
     ),
 )
 
