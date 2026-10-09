@@ -19,7 +19,13 @@ from langchain_core.runnables import Runnable, chain
 
 from perry import colbert as colbert_index
 from perry import models, summaries
-from perry.search import RRF_K, SearchHit, hybrid_search, summary_search
+from perry.search import (
+    RRF_K,
+    SearchHit,
+    document_count,
+    hybrid_search,
+    summary_search,
+)
 from perry.self_query import self_query
 
 
@@ -31,8 +37,9 @@ class Technique:
     value. `description` says when to use it; it is the tool description the Knowledge
     Agent's model picks by. `examples` are hand-written questions it suits best, for
     picking by similarity; never copy them from the benchmark (a test checks).
-    `needs_summaries` marks a technique that searches Summaries: it isn't picked while
-    Summaries are pending.
+    `summary_kind` is the kind of Summaries a technique searches (`summaries.DOCUMENT`
+    or `summaries.RAPTOR`), if it searches any: it searches only Documents whose
+    Summaries of that kind are ready, and isn't picked until at least one is.
     """
 
     name: str
@@ -40,7 +47,7 @@ class Technique:
     description: str
     examples: tuple[str, ...]
     chain: Runnable[str, list[SearchHit]]
-    needs_summaries: bool = False
+    summary_kind: str | None = None
 
 
 @chain
@@ -206,7 +213,7 @@ def raptor(question: str) -> list[SearchHit]:
     """RAPTOR: match the question against every node of the Documents' RAPTOR trees and
     the cross-Document level above them (only ready trees), then return the leaf Chunks
     beneath the best nodes. A node's Summary is never returned, so never cited."""
-    return summary_search(question, kind="raptor")
+    return summary_search(question, kind=summaries.RAPTOR)
 
 
 TECHNIQUES: tuple[Technique, ...] = (
@@ -329,7 +336,7 @@ TECHNIQUES: tuple[Technique, ...] = (
             "What is the vendor evaluation report about?",
         ),
         chain=document_summaries,
-        needs_summaries=True,
+        summary_kind=summaries.DOCUMENT,
     ),
     Technique(
         name="raptor",
@@ -348,7 +355,7 @@ TECHNIQUES: tuple[Technique, ...] = (
             "Across everything I uploaded, what are the recurring cost concerns?",
         ),
         chain=raptor,
-        needs_summaries=True,
+        summary_kind=summaries.RAPTOR,
     ),
     Technique(
         name="self_query",
@@ -389,18 +396,42 @@ TECHNIQUES: tuple[Technique, ...] = (
 )
 
 
-def summaries_pending() -> bool:
-    """Whether any Document's Summaries are still being built in the background.
-    (Summary-based techniques also skip, per Document, any Document not ready.)"""
-    return summaries.pending_count() > 0
-
-
 def available() -> list[Technique]:
-    """The registered techniques that can be picked right now: all of them, except
-    those that search Summaries while any Document's Summaries are pending. (A forced
-    technique runs regardless.)"""
-    pending = summaries_pending()
-    return [t for t in TECHNIQUES if not (t.needs_summaries and pending)]
+    """The registered techniques that can be picked right now: all of them, except one
+    that searches Summaries while no Document's Summaries of its kind are ready. (It
+    searches only ready Documents; a forced technique runs regardless.)"""
+    kinds = {t.summary_kind for t in TECHNIQUES if t.summary_kind}
+    ready = {kind for kind in kinds if summaries.count(kind, ready=True)}
+    return [t for t in TECHNIQUES if not t.summary_kind or t.summary_kind in ready]
+
+
+_SUMMARIES_NAMED = {summaries.DOCUMENT: "Summaries", summaries.RAPTOR: "RAPTOR trees"}
+
+
+def nothing_found(technique: Technique, hits: list[SearchHit]) -> str:
+    """Why `technique` found no Chunks (`hits` is its empty result), truthfully, for the
+    Knowledge Agent's model to tell the user or search with another technique."""
+    if document_count() == 0:
+        return "No Chunks found: the user has not uploaded any Documents yet."
+    nothing = f"No Chunks found with {technique.label}"
+    if reason := getattr(hits, "reason", ""):
+        return f"{nothing}: {reason}. Tell the user, or search with another technique."
+    if technique.summary_kind:
+        waiting = summaries.count(technique.summary_kind, ready=False)
+        if waiting:
+            what = _SUMMARIES_NAMED[technique.summary_kind]
+            documents = "1 Document" if waiting == 1 else f"{waiting} Documents"
+            note = (
+                f"{nothing}: the {what} of {documents} aren't ready yet, and only ready "
+                "ones are searched. Search with another technique."
+            )
+            if not models.summaries_supported():
+                note += f" ({models.summary_model_hint()})"
+            return note
+    return (
+        f"{nothing}. Tell the user the Documents don't seem to contain it, or search "
+        "with another technique."
+    )
 
 
 def get(name: str) -> Technique:

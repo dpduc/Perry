@@ -6,9 +6,9 @@ apart under the fake (bag-of-words) embeddings, so which one is nearest is plain
 """
 
 import pytest
-from fakes import call, last_message
+from fakes import FakeSummaryModel, call, fake_provider, last_message
 
-from perry import techniques
+from perry import models, summaries, techniques
 from perry.techniques import Technique, hybrid
 
 BUDGET = Technique(
@@ -45,7 +45,7 @@ SUMMARIES = Technique(
         "Which Document mentions the ridge path?",
     ),
     chain=hybrid,
-    needs_summaries=True,
+    summary_kind="document",
 )
 
 
@@ -118,13 +118,13 @@ def test_semantic_mode_picks_even_on_a_close_call(perry, registry, monkeypatch):
 SUMMARY_QUESTION = "Which Document covers the marketing budget?"
 
 
-def test_a_summary_based_technique_is_picked_when_summaries_are_ready(
+def test_a_summary_based_technique_is_picked_once_a_documents_summary_is_ready(
     perry, registry, monkeypatch
 ):
     monkeypatch.setenv("PERRY_PICKING_MODE", "semantic")
-    # Stands in for every Document's Summary being ready (test_summaries.py covers the
-    # real status: the fake provider here has no summary model, so they stay pending).
-    monkeypatch.setattr(techniques, "summaries_pending", lambda: False)
+    perry.add_document("plan.md", "The marketing plan for Q4.")
+    with models.use(fake_provider(perry.model, summary=FakeSummaryModel())):
+        summaries.summarise_pending()  # plan.md's Summary is ready; the next two pend
 
     reply = ask(perry, SUMMARY_QUESTION, "summary_search")
 
@@ -132,12 +132,11 @@ def test_a_summary_based_technique_is_picked_when_summaries_are_ready(
 
 
 @pytest.mark.parametrize("mode", ["semantic", "logical"])
-def test_summary_based_techniques_are_not_picked_while_summaries_are_pending(
+def test_summary_based_techniques_are_not_picked_while_no_summary_is_ready(
     perry, registry, monkeypatch, mode
 ):
     monkeypatch.setenv("PERRY_PICKING_MODE", mode)
-    # Stands in for Documents still being summarised (the background job, #21).
-    monkeypatch.setattr(techniques, "summaries_pending", lambda: True)
+    # The Documents `ask` uploads are pending: this provider has no summary model.
 
     reply = ask(perry, SUMMARY_QUESTION, "summary_search")
 

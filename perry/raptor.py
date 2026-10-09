@@ -35,7 +35,7 @@ from perry.documents import citation
 log = logging.getLogger(__name__)
 
 PENDING, READY, FAILED = summaries.PENDING, summaries.READY, summaries.FAILED
-KIND = "raptor"
+KIND = summaries.RAPTOR
 
 # At most this many nodes are summarised together: it bounds one summary prompt (six
 # Chunks are ~2,300 tokens, minutes on a CPU) and makes every level shrink.

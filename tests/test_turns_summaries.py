@@ -38,7 +38,23 @@ def test_document_summaries_finds_nothing_while_summaries_are_pending(perry):
     reply = perry.send("Which file has my Q3 marketing budget?", technique="document_summaries")
 
     assert "40,000" not in reply
-    assert "No passages found" in reply
+    # The Knowledge Agent is told why: the Summaries aren't ready, not that there are
+    # no Documents.
+    assert "not uploaded" not in reply
+    assert "Summaries of 1 Document aren't ready" in reply
+
+
+def test_a_question_with_no_documents_uploaded_is_told_so(perry):
+    perry.script(
+        call("ask_knowledge_agent", question="What is the Q3 marketing budget?"),
+        call("hybrid_search", question="Q3 marketing budget"),
+        last_message,
+        last_message,
+    )
+
+    reply = perry.send("How big is my Q3 marketing budget?")
+
+    assert "the user has not uploaded any Documents yet" in reply
 
 
 def test_forced_raptor_answers_with_page_citations_and_names_itself(perry):

@@ -184,3 +184,29 @@ def test_forced_self_query_answers_with_citations_and_its_found_with_line(perry)
     *_, citations, found_with = reply.splitlines()
     assert citations == "Citations: [budget-2025.md]"
     assert found_with == "Found with: Self-query (forced)"
+
+
+def test_a_filter_no_document_matches_is_reported_and_another_technique_can_answer(perry):
+    for name, text in BUDGETS.items():
+        perry.add_document(name, text)
+    question = "In the 2019 budget notes, what is the marketing budget?"
+
+    def told_no_document_matches(messages):
+        # Self-query keeps its strict filter, and tells the model which one matched nothing.
+        assert "No Document matches the filter" in messages[-1].text
+        assert "name '2019 budget'" in messages[-1].text
+        return call("hybrid_search", question="marketing budget")
+
+    perry.script(
+        call("ask_knowledge_agent", question=question),  # Supervisor
+        call("self_query", question=question),  # Knowledge Agent
+        json.dumps({"query": "marketing budget", "name": "2019 budget"}),  # the filter
+        told_no_document_matches,  # Knowledge Agent tries another technique
+        last_message,  # Knowledge Agent reports the Chunks it found
+        last_message,  # Supervisor passes the findings on
+    )
+
+    reply = perry.send(question)
+
+    assert "marketing budget is" in reply
+    assert reply.splitlines()[-1] == "Found with: Hybrid search (picked logically)"

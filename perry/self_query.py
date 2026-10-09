@@ -15,7 +15,7 @@ from datetime import date, datetime
 from langchain_core.runnables import chain
 
 from perry import db, models
-from perry.search import DocumentFilter, SearchHit, hybrid_search
+from perry.search import DocumentFilter, NoHits, SearchHit, hybrid_search
 
 # How many Documents the prompt lists, so the model can match the user's wording to them.
 LISTED_DOCUMENTS = 100
@@ -55,7 +55,11 @@ def self_query(question: str) -> list[SearchHit]:
     query, where = parse_reply(reply, question)
     if not where:
         return hybrid_search(question)
-    return hybrid_search(query, where=where)
+    # Strict: a filter no Document matches finds nothing, and says so, rather than
+    # quietly searching every Document.
+    return hybrid_search(query, where=where) or NoHits(
+        f"No Document matches the filter ({where.describe()})"
+    )
 
 
 def _documents() -> str:

@@ -33,17 +33,39 @@ PICKED_SEMANTICALLY = "picked semantically"  # its example questions were neares
 FORCED = "forced"  # the per-request override named it
 
 
-def technique_tool(technique: Technique) -> BaseTool:
-    """`technique` as a tool the Knowledge Agent can call, described for picking."""
+class _Search:
+    """One question's searches: which Retrieval Technique answers it. The first technique
+    to find Chunks answers the question, so every later search for it uses that one too
+    (one technique per question); a technique that found nothing doesn't count."""
 
-    def search(question: str) -> str:
-        hits = technique.chain.invoke(question)
+    def __init__(self):
+        self.answering: Technique | None = None  # the technique that found Chunks
+        self.last: Technique | None = None  # the technique the latest search used
+
+
+def technique_tool(technique: Technique, search: _Search | None = None) -> BaseTool:
+    """`technique` as a tool the Knowledge Agent can call, described for picking. Within
+    one question's `search`, calling it after another technique found Chunks searches
+    with that technique instead."""
+    search = search or _Search()
+
+    def run(question: str) -> str:
+        used = search.answering or technique
+        hits = used.chain.invoke(question)
+        search.last = used
         if not hits:
-            return "No passages found. The user has not uploaded any Documents yet."
-        return "\n\n".join(f"[{hit.citation}]\n{hit.text}" for hit in hits)
+            return techniques.nothing_found(used, hits)
+        search.answering = used
+        found = "\n\n".join(f"[{hit.citation}]\n{hit.text}" for hit in hits)
+        if used is not technique:
+            found = (
+                f"(Searched with {used.label}: one Retrieval Technique per question, and "
+                f"{used.label} already found Chunks for this one.)\n\n{found}"
+            )
+        return found
 
     return StructuredTool.from_function(
-        search, name=technique.name, description=technique.description
+        run, name=technique.name, description=technique.description
     )
 
 
@@ -60,8 +82,9 @@ def knowledge_agent(tools: list[BaseTool]):
 
 @dataclass(frozen=True)
 class Findings:
-    """The Knowledge Agent's cited findings, and which Retrieval Techniques found them,
-    each as the "Found with" line names it, e.g. "Hybrid search (picked logically)"."""
+    """The Knowledge Agent's cited findings, and the Retrieval Technique that found them
+    as the "Found with" line names it, e.g. "Hybrid search (picked logically)" (none if
+    the Knowledge Agent didn't search)."""
 
     text: str
     found_with: tuple[str, ...] = ()
@@ -82,10 +105,12 @@ def find(
             offered, how = [picked], PICKED_SEMANTICALLY
         else:
             offered, how = candidates, PICKED_LOGICALLY
-    agent = knowledge_agent([technique_tool(t) for t in offered])
+    search = _Search()
+    agent = knowledge_agent([technique_tool(t, search) for t in offered])
     result = agent.invoke({"messages": [{"role": "user", "content": question}]})
-    used = dict.fromkeys(m.name for m in result["messages"] if m.type == "tool")
-    found_with = tuple(f"{t.label} ({how})" for t in offered if t.name in used)
+    # The technique that found the Chunks or, if none did, the one that searched last.
+    used = search.answering or search.last
+    found_with = (f"{used.label} ({how})",) if used else ()
     return Findings(result["messages"][-1].text, found_with)
 
 

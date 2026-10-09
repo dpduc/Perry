@@ -5,7 +5,7 @@ from datetime import date, datetime, time, timedelta
 
 from pgvector import Vector
 
-from perry import db, models
+from perry import db, models, summaries
 from perry.documents import citation
 
 # How many candidates each method contributes before fusion.
@@ -61,6 +61,21 @@ class SearchHit:
         return cls(row["name"], row["page"], row["text"], float(score))
 
 
+class NoHits(list):
+    """An empty search result that says why nothing was found when a technique knows,
+    e.g. "No Document matches the filter (name '2019 budget')". Equal to []."""
+
+    def __init__(self, reason: str):
+        super().__init__()
+        self.reason = reason
+
+
+def document_count() -> int:
+    """How many Documents the user has uploaded."""
+    with db.pool().connection() as conn:
+        return conn.execute("SELECT count(*) AS n FROM documents").fetchone()["n"]
+
+
 @dataclass(frozen=True)
 class DocumentFilter:
     """Which Chunks a search may return, by their Document's metadata. Every field set
@@ -86,6 +101,14 @@ class DocumentFilter:
 
     def __bool__(self) -> bool:
         return any(getattr(self, f.name) is not None for f in fields(self))
+
+    def describe(self) -> str:
+        """The filter in words, e.g. "name '2025 budget', file type 'pdf'"."""
+        return ", ".join(
+            f"{f.name.replace('_', ' ')} '{getattr(self, f.name)}'"
+            for f in fields(self)
+            if getattr(self, f.name) is not None
+        )
 
     def sql(self) -> tuple[list[str], dict]:
         """The SQL conditions on `d` (documents) and `c` (chunks), and their parameters."""
@@ -203,12 +226,8 @@ LIMIT %(limit)s
 """
 
 
-# The status column that says whether a Document's Summaries of each kind are ready.
-_STATUS = {"document": "summary_status", "raptor": "raptor_status"}
-
-
 def summary_search(
-    query: str, limit: int = 6, *, kind: str = "document", embed=models.embed_query
+    query: str, limit: int = 6, *, kind: str = summaries.DOCUMENT, embed=models.embed_query
 ) -> list[SearchHit]:
     """The Chunks beneath the Summaries of `kind` that best match `query`: the best
     Chunks under the best-matching Summary first. A Summary is never returned itself,
@@ -223,5 +242,6 @@ def summary_search(
         "limit": limit,
     }
     with db.pool().connection() as conn:
-        rows = conn.execute(SUMMARY_SQL.format(status=_STATUS[kind]), params).fetchall()
+        sql = SUMMARY_SQL.format(status=summaries.STATUS_COLUMN[kind])
+        rows = conn.execute(sql, params).fetchall()
     return [SearchHit.from_row(row) for row in rows]

@@ -32,6 +32,9 @@ log = logging.getLogger(__name__)
 
 PENDING, READY, FAILED = "pending", "ready", "failed"
 DOCUMENT = "document"  # the kind of a Summary of a whole Document
+RAPTOR = "raptor"  # the kind of a RAPTOR node (see perry.raptor)
+# The Document column saying whether its Summaries of each kind are ready.
+STATUS_COLUMN = {DOCUMENT: "summary_status", RAPTOR: "raptor_status"}
 
 # The local model reads ~9 tokens/s on a CPU, so a Summary reads only the start of a
 # Document (about 2,500 tokens), which usually says what it is about and when.
@@ -87,6 +90,18 @@ def pending_count() -> int:
         row = conn.execute(
             "SELECT count(*) AS n FROM documents WHERE summary_status = %s OR raptor_status = %s",
             (PENDING, PENDING),
+        ).fetchone()
+    return int(row["n"])
+
+
+def count(kind: str, *, ready: bool) -> int:
+    """How many Documents have (`ready`) or haven't yet got their Summaries of `kind`
+    (DOCUMENT or RAPTOR): not yet means pending or failed."""
+    column = STATUS_COLUMN[kind]
+    comparison = "=" if ready else "<>"
+    with db.pool().connection() as conn:
+        row = conn.execute(
+            f"SELECT count(*) AS n FROM documents WHERE {column} {comparison} %s", (READY,)
         ).fetchone()
     return int(row["n"])
 

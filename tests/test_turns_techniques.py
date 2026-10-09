@@ -155,6 +155,39 @@ def test_a_chained_turn_is_still_split_into_agent_steps_by_the_supervisor(perry,
     assert reply.splitlines()[-1] == "Found with: Question Decomposition (forced)"
 
 
+def test_a_forced_technique_still_applies_after_a_confirmation_resumes_the_turn(
+    perry, workspace
+):
+    """The Knowledge Agent asked only after the user approves a Write Action is still
+    held to the technique the Turn was forced with."""
+    from perry.supervisor import Approve, Confirmation
+
+    perry.add_document("budget.md", "The marketing budget for Q3 is 40,000 dollars.")
+    perry.script(
+        call("ask_task_agent", request="Email sam@example.com: meeting at 3pm."),  # Supervisor
+        call("send_email", to="sam@example.com", subject="Meeting", body="At 3pm."),
+    )
+
+    pending = perry.send(
+        "Email Sam that we meet at 3pm, then tell me the Q3 marketing budget",
+        technique="hyde",
+    )
+    assert isinstance(pending, Confirmation)
+    perry.script(
+        last_message,  # Task Agent reports the email was sent
+        call("ask_knowledge_agent", question="What is the Q3 marketing budget?"),  # Supervisor
+        call("hyde", question="Q3 marketing budget"),  # Knowledge Agent
+        "The marketing budget for Q3 is 10,000 dollars.",  # HyDE's hypothetical answer
+        last_message,  # Knowledge Agent reports the Chunks it found
+        last_message,  # Supervisor passes the findings on
+    )
+
+    reply = perry.resume(Approve())
+
+    assert "40,000 dollars" in reply
+    assert reply.splitlines()[-1] == "Found with: HyDE (forced)"
+
+
 def test_sub_questions_count_toward_the_token_ceiling_and_the_turn_reports_its_findings(
     perry, monkeypatch
 ):
@@ -222,3 +255,22 @@ def test_rewrite_calls_are_recorded_as_rewrites_and_count_toward_the_token_ceili
 
     assert reply.startswith("I stopped because this Turn reached its limit of 1,000 tokens.")
     assert usage.today("rewrite").tokens == 450
+
+
+def test_one_retrieval_technique_answers_each_question(perry):
+    """Once a technique has found Chunks for a question, the Knowledge Agent's further
+    searches for it use the same technique, and the "Found with" line names only it."""
+    perry.add_document("budget.md", "The marketing budget for Q3 is 40,000 dollars.")
+    perry.add_document("hiking.md", "Trail notes: the ridge path is steep after the waterfall.")
+    perry.script(
+        call("ask_knowledge_agent", question="What is the Q3 marketing budget?"),  # Supervisor
+        call("hybrid_search", question="Q3 marketing budget"),  # Knowledge Agent
+        call("rag_fusion", question="third quarter marketing spend"),  # tries another
+        last_message,  # Knowledge Agent reports the Chunks it found
+        last_message,  # Supervisor passes the findings on
+    )
+
+    reply = perry.send("How big is my Q3 marketing budget?")
+
+    assert "40,000 dollars" in reply
+    assert reply.splitlines()[-1] == "Found with: Hybrid search (picked logically)"

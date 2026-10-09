@@ -257,10 +257,13 @@ def dataset_list() -> str:
 
 
 def summarising_status() -> str:
-    """The sidebar's note on Documents still waiting for their Summary; empty if none."""
+    """The sidebar's note on Documents still waiting for their Summary; empty if none.
+    Without a local summary model nothing is being summarised, so it says what's needed."""
     pending = summaries.pending_count()
     if not pending:
         return ""
+    if not models.summaries_supported():
+        return models.summary_model_hint()
     return f"Summarising {pending} Document{'' if pending == 1 else 's'}…"
 
 

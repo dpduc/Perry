@@ -73,10 +73,10 @@ class NotReady(Exception):
 
 def _needs_summaries(setups: list[str]) -> bool:
     """Whether any setup may search Summaries: a summary-based technique, or a picking
-    mode (which only picks those once every Document's Summaries are ready)."""
+    mode (which may pick those once a Document's Summaries are ready)."""
     from perry import techniques
 
-    summary_based = {t.name for t in techniques.TECHNIQUES if t.needs_summaries}
+    summary_based = {t.name for t in techniques.TECHNIQUES if t.summary_kind}
     return any(s in summary_based or s in picking_modes() for s in setups)
 
 

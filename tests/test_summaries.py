@@ -184,3 +184,32 @@ def test_document_summaries_is_not_offered_for_picking_while_summaries_are_pendi
     summaries.summarise_pending()
 
     assert "document_summaries" in {t.name for t in techniques.available()}
+
+
+def offered() -> set[str]:
+    return {t.name for t in techniques.available()}
+
+
+def test_summary_based_techniques_stay_offered_while_another_document_is_summarised(
+    summary_model, upload
+):
+    upload("budget.md", "The marketing budget for Q3 is 40,000 dollars.")
+    summaries.summarise_pending()
+
+    upload("hiking.md", "Trail notes: the ridge path is steep after the waterfall.")  # pending
+
+    # They search only budget.md until hiking.md is ready.
+    assert {"document_summaries", "raptor"} <= offered()
+
+
+def test_a_pending_raptor_tree_does_not_hold_back_document_summaries(summary_model, upload):
+    summary_model.replies += [
+        summary_reply("The Q3 marketing budget."),
+        httpx.ConnectError("Ollama isn't running"),  # the RAPTOR tree fails
+    ]
+    upload("budget.md", "The marketing budget for Q3 is 40,000 dollars.")
+    summaries.summarise_pending()
+    summaries.retry_failed()  # what the next start does: the tree is pending again
+
+    assert "document_summaries" in offered()
+    assert "raptor" not in offered()

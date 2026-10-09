@@ -24,7 +24,7 @@ from pathlib import Path
 import numpy as np
 
 from perry import db, models, paths
-from perry.search import SearchHit
+from perry.search import NoHits, SearchHit
 
 log = logging.getLogger(__name__)
 
@@ -100,7 +100,7 @@ def update() -> Iterator[Update]:
 def search(question: str, limit: int = 6) -> list[SearchHit]:
     """The Chunks that best match `question` token by token (MaxSim), best first."""
     if not models.colbert_supported():
-        return []
+        return NoHits("ColBERT is off: this model provider has no ColBERT encoder")
     query = models.colbert_encode_query(question)
     with _lock:
         live = _live_index()
