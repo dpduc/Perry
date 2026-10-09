@@ -1,0 +1,53 @@
+Halden Robotics AB - Annual Report 2025
+
+Letter from the Chief Executive Officer
+
+Dear shareholders,
+
+2025 was the year Halden Robotics grew up. Total revenue reached EUR 84.2 million, an increase of 18% on the EUR 71.4 million we reported for 2024. We ended the year with 412 employees, up from 351, and we remain headquartered in Gothenburg, Sweden, where the company was founded in 2016.
+
+Halden sells three product lines to warehouse and logistics operators. Kestrel is our autonomous pallet mover, now in its third generation (Kestrel K3). Wren is a robotic picking arm for mixed-item orders. Osprey is our fleet software, which schedules and routes mixed fleets of robots from Halden and other vendors.
+
+The year was not without setbacks. The launch of Kestrel K3 slipped by five months, and I want to be candid about what we learned from it; the engineering team's review is summarised in a separate post-mortem. Despite the delay, K3 has been well received by customers in cold-chain logistics, a market we could not serve before.
+
+I would like to thank our customers, our suppliers and every Halden employee for an extraordinary year.
+
+Mara Lindqvist
+Chief Executive Officer
+Gothenburg, February 2026
+=== page break ===
+Results by product line
+
+Kestrel remained our largest product line with revenue of EUR 41.0 million (2024: EUR 37.9 million). Growth was held back by the late K3 launch, as several customers waited for the new model rather than buying K2 units.
+
+Wren generated revenue of EUR 27.5 million (2024: EUR 22.8 million). Demand from e-commerce fulfilment centres in Germany and the Netherlands drove most of the increase.
+
+Osprey generated revenue of EUR 15.7 million (2024: EUR 10.7 million), growth of 46%, making it our fastest-growing product line. Osprey is sold as a subscription, so its revenue is recurring and more predictable than hardware sales. More than 60 customer sites now run Osprey, a third of them with robots from other vendors.
+
+Group gross margin was 38.5% (2024: 36.1%). The improvement came mainly from the higher share of Osprey subscription revenue and from lower unit costs on Wren.
+
+Operating profit was EUR 6.9 million, compared with EUR 4.2 million in 2024.
+=== page break ===
+Operations and investment
+
+In June 2025 we opened our second factory, in Brno, Czech Republic. The Brno plant assembles Wren picking arms and Kestrel drive units and has a capacity of 1,200 units per year. Moving Wren assembly closer to our Central European customers shortens delivery times by about three weeks.
+
+Research and development spending was EUR 12.6 million, or 15% of revenue. Most of it went to the Kestrel K3 platform and to route planning in Osprey.
+
+Finance
+
+Chief Financial Officer Tomas Reyes reports that cash at year end was EUR 18.3 million. The Brno investment was financed from our own cash and a EUR 10 million credit facility, of which EUR 4 million had been drawn at year end.
+
+Our people
+
+Headcount grew by 61 people during the year, most of them in Brno and in software engineering. Employee turnover was 7%, in line with 2024.
+=== page break ===
+Risks and outlook
+
+Component supply. The most significant operational risk is concentration of supply. Kestrel relies on a single supplier, Nordvik Optics, for its lidar sensors. A problem at that supplier can stop Kestrel deliveries entirely, as the K3 launch showed. The board has approved a policy to dual-source every critical component.
+
+Currency. Most of our costs are in Swedish kronor and Czech koruna, while most of our revenue is in euros. We hedge around half of the expected net exposure for the following twelve months.
+
+Competition. Larger automation vendors are entering the market for autonomous pallet movers, which may put pressure on Kestrel prices.
+
+Outlook for 2026. We expect revenue of EUR 95 to 100 million in 2026, driven by a full year of Kestrel K3 sales, the Brno plant running at full capacity and continued growth in Osprey subscriptions. We expect gross margin to stay above 38%.

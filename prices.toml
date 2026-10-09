@@ -1,0 +1,30 @@
+# Price table for the usage ledger: USD per million tokens, per model.
+# Read on every model call, so edits apply without a restart. Past calls keep the
+# cost they were recorded with. A model missing here is recorded at cost 0.
+# Point PERRY_PRICES_FILE at another file to use a different table.
+#
+# These are paid-tier list prices to check against https://ai.google.dev/pricing.
+# On the free tier the real bill is 0; these show what the same usage would cost.
+
+[models."gemini-3.8-flash"]
+input_per_million = 0.30
+output_per_million = 2.50  # includes thinking tokens
+
+[models."gemini-embedding-001"]
+input_per_million = 0.15
+
+# ColBERT runs on this machine: free, but recorded like every model call.
+[models."answerdotai/answerai-colbert-small-v1"]
+input_per_million = 0
+
+# Reads voice answers aloud: input is text, output is audio tokens.
+# (Speech-to-text runs on the chat model above, priced at its audio-input rate there.)
+[models."gemini-2.5-flash-preview-tts"]
+input_per_million = 0.50
+output_per_million = 10.00
+
+# The local summary model (Ollama, PERRY_SUMMARY_MODEL): runs on this machine, so free.
+# Add a zero entry like this one if you switch to another local model.
+[models."qwen3:8b"]
+input_per_million = 0
+output_per_million = 0

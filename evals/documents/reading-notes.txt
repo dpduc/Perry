@@ -1,0 +1,7 @@
+Reading notes
+
+The Design of Everyday Things, by Don Norman. Finished in March 2026. Rating: 4 out of 5.
+Key ideas: affordances are what an object lets you do; signifiers tell you where and how to act.
+When people make errors with a device, blame the design before blaming the user.
+
+Next on the list: Thinking in Systems, by Donella Meadows.

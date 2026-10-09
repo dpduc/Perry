@@ -4,3 +4,5 @@ __pycache__/
 .ruff_cache/
 .gradio/
 .env
+benchmark/.storage/
+google_client.json
