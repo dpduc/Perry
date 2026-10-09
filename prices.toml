@@ -3,28 +3,44 @@
 # cost they were recorded with. A model missing here is recorded at cost 0.
 # Point PERRY_PRICES_FILE at another file to use a different table.
 #
-# These are paid-tier list prices to check against https://ai.google.dev/pricing.
-# On the free tier the real bill is 0; these show what the same usage would cost.
+# These are what you really pay, so the Daily Cap counts real money: Gemini runs on the
+# free tier (0), local models cost nothing, and only the paid OpenAI models count.
+
+# --- Gemini, free tier (paid-tier list prices in comments, https://ai.google.dev/pricing)
 
 [models."gemini-3.8-flash"]
-input_per_million = 0.30
-output_per_million = 2.50  # includes thinking tokens
-
-[models."gemini-embedding-001"]
-input_per_million = 0.15
-
-# ColBERT runs on this machine: free, but recorded like every model call.
-[models."answerdotai/answerai-colbert-small-v1"]
-input_per_million = 0
+input_per_million = 0       # paid tier: 0.30
+output_per_million = 0      # paid tier: 2.50, including thinking tokens
 
 # Reads voice answers aloud: input is text, output is audio tokens.
-# (Speech-to-text runs on the chat model above, priced at its audio-input rate there.)
+# (Speech-to-text runs on the chat model above.)
 [models."gemini-2.5-flash-preview-tts"]
-input_per_million = 0.50
-output_per_million = 10.00
+input_per_million = 0       # paid tier: 0.50
+output_per_million = 0      # paid tier: 10.00
 
-# The local summary model (Ollama, PERRY_SUMMARY_MODEL): runs on this machine, so free.
-# Add a zero entry like this one if you switch to another local model.
+# --- OpenAI, paid: the fallback chat model and the benchmark's model.
+# Check against https://developers.openai.com/api/docs/models (output includes reasoning).
+
+[models."gpt-5.4-mini"]
+input_per_million = 0.75
+output_per_million = 4.50
+
+[models."gpt-5.4-nano"]
+input_per_million = 0.20
+output_per_million = 1.25
+
+# --- Local models: run on this machine, so free, but recorded like every model call.
+# Add a zero entry like these if you switch to another local model.
+
+# Embeddings (Ollama, PERRY_EMBEDDING_MODEL).
+[models."nomic-embed-text"]
+input_per_million = 0
+
+# Summaries, Document metadata and RAPTOR (Ollama, PERRY_SUMMARY_MODEL).
 [models."qwen3:8b"]
 input_per_million = 0
 output_per_million = 0
+
+# ColBERT.
+[models."answerdotai/answerai-colbert-small-v1"]
+input_per_million = 0

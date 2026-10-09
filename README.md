@@ -33,7 +33,8 @@ docker compose up -d --wait          # Postgres + pgvector on 127.0.0.1:5433
 Then create `.env` in the repo root (it's gitignored, never commit it):
 
 ```ini
-GEMINI_API_KEY=...                   # https://aistudio.google.com/apikey
+GEMINI_API_KEY=...                   # https://aistudio.google.com/apikey (the free tier is enough)
+OPENAI_API_KEY=...                   # optional, paid: answers when Gemini's free quota is used up, and runs the benchmark grid
 # Optional LangSmith tracing; the endpoint must match your account's region:
 # api. (US), eu.api. or apac.api.smith.langchain.com (a 403 on every call means a region mismatch)
 LANGCHAIN_TRACING_V2=true
@@ -41,7 +42,16 @@ LANGCHAIN_ENDPOINT=https://api.smith.langchain.com
 LANGCHAIN_API_KEY=...
 ```
 
+Install [Ollama](https://ollama.com) and pull the local models: embeddings and Summaries run on this machine.
+
+```powershell
+ollama pull nomic-embed-text   # embeddings for every Chunk and Summary (needed)
+ollama pull qwen3:8b           # Summaries, Document metadata and RAPTOR (background)
+```
+
 Everything else has a default; see [Settings](#settings) for the optional overrides.
+
+**Which model does what:** chat (the Supervisor, the Agents, rewriting and picking) runs on Gemini's free tier. When its daily quota is used up (it resets at midnight Pacific time, 14:00 or 15:00 in Bangkok), or Gemini stays overloaded after retries, the call goes to the paid OpenAI model (`PERRY_FALLBACK_LLM_MODEL`) instead, and so does the rest of that day's chat. Without `OPENAI_API_KEY` there is no fallback and Perry says the quota is used up. Embeddings, Summaries and ColBERT run locally and cost nothing. Speech and scanned pages stay on Gemini only.
 
 ## Use
 
@@ -120,10 +130,10 @@ Click the paperclip (or drop a file) to attach a screenshot, chart or receipt, a
 
 ### 8. Keep an eye on cost
 
-- The sidebar line `Today: N tokens · $x of $1.00` is read from the usage ledger.
+- The sidebar line `Today: N tokens · $x of $0.50` is read from the usage ledger.
 - Every model call is in the ledger with what it was for, e.g. `rewrite`, `decompose`, `hyde`, `summary`, `raptor` or `colbert`. Semantic picking's embeddings are recorded as `pick`; logical picking has no call of its own (the Knowledge Agent's model picks while answering, recorded as `chat`).
 - A single Turn stops at `PERRY_TURN_TOKEN_CEILING` tokens (default 50,000) and reports what it found so far.
-- Once `PERRY_DAILY_CAP_USD` (default $1) is reached, new Turns are refused until local midnight. A Turn already running always finishes.
+- Once `PERRY_DAILY_CAP_USD` (default $0.50) is reached, new Turns are refused until local midnight. A Turn already running always finishes.
 - Prices live in `prices.toml`; edit it to match current pricing. All limits are set in `.env`.
 
 ## More about the features
@@ -149,7 +159,7 @@ Knowledge Turns can also name the Retrieval Technique expected to find the answe
 
 **Tuning the cascade margin.** `--tune-margin` embeds every eval Turn that expects a technique (embedding calls only, a fraction of a cent) and measures how much nearer semantic picking's top technique is than the runner-up, and whether the top one is the expected one. The tuned margin is the smallest that sits above every wrong pick's gap (midway to the next right one): every question cascade settles semantically on the eval Turns was picked right, and the rest go to logical picking, which is assumed right there (measuring it needs chat calls; the full eval run's soft check does that). Record the printed value as `DEFAULT_CASCADE_MARGIN` in [perry/picking.py](perry/picking.py) and in the settings table. Rerun it after changing technique example questions, technique eval Turns or the embedding model. Eval questions must never be benchmark questions or router example questions (a test checks), or the tuning grades its own answer key.
 
-The current `0.074` comes from a run on 2026-10-09 with `gemini-embedding-001`: semantic picking alone was right on 11 of 22 Turns, and the most confident wrong pick (a comparison question sent to hybrid search, gap 0.071) sets the margin, so only 2 of 22 Turns were settled semantically. Better example questions would let cascade skip more model calls.
+The current `0.116` comes from a run on 2026-10-09 with `nomic-embed-text`: semantic picking alone was right on 8 of 22 Turns, and its most confident wrong pick sets the margin above every Turn's gap, so for now cascade leaves every question to logical picking (never a wrong semantic pick, at one extra model call each). Better example questions would let cascade settle more questions semantically. (With `gemini-embedding-001` it was `0.074`, 11 of 22 right.) Rerun the tuning after changing the embedding model or the example questions; it only embeds, so it's free.
 
 ## Connecting Google (Task Agent)
 
@@ -178,11 +188,11 @@ The grid asks the same 23 questions with every Retrieval Technique forced (10 se
 
 ```bash
 docker compose up -d
-ollama serve            # with qwen3:8b pulled: Summaries and RAPTOR trees, free but slow
+ollama serve            # embeddings, plus Summaries and RAPTOR trees (free but slow)
 uv run python -m benchmark.run grid
 ```
 
-The full grid is 299 Knowledge Agent Turns on the paid key (about $1–3 on Flash; the free tier can't run it). Before asking anything, the run gets the benchmark Documents ready: it ingests them, brings the ColBERT index in step with Postgres, and, when a setup may search Summaries (`document_summaries`, `raptor` or any picking mode), writes every Summary and RAPTOR tree on the local model. That takes minutes per Document on a CPU, once; later runs reuse them. If Ollama isn't running or a Document fails to summarise, the run stops before spending anything and says why.
+The full grid is 299 Knowledge Agent Turns, every one on the paid OpenAI model `PERRY_BENCHMARK_LLM_MODEL` (default `gpt-5.4-nano`), so its rows never mix two models; it needs `OPENAI_API_KEY`. It prints the estimated cost of the Turns still to ask (about $1 for the full grid on nano) and waits for your OK; `--yes` skips the question. Before asking anything, the run gets the benchmark Documents ready: it ingests them, brings the ColBERT index in step with Postgres, and, when a setup may search Summaries (`document_summaries`, `raptor` or any picking mode), writes every Summary and RAPTOR tree on the local model. That takes minutes per Document on a CPU, once; later runs reuse them. If Ollama isn't running or a Document fails to summarise, the run stops before spending anything and says why.
 
 Limit a run to some setups, e.g. after changing one technique:
 
@@ -202,8 +212,12 @@ All optional; add any of these to `.env` to override the default.
 
 | Setting | Default | What it does |
 |---|---|---|
-| `PERRY_LLM_MODEL` | `gemini-3.8-flash` | Chat model; also used for speech-to-text and image reading |
-| `PERRY_EMBEDDING_MODEL` | `gemini-embedding-001` | Embedding model (changing it means re-ingesting every Document) |
+| `PERRY_LLM_MODEL` | `gemini-3.8-flash` | Chat model (free tier); also used for speech-to-text and image reading |
+| `PERRY_FALLBACK_LLM_MODEL` | `gpt-5.4-mini` | Paid OpenAI chat model used once Gemini's free quota is used up or it stays overloaded (needs `OPENAI_API_KEY`); give it a price in `prices.toml` |
+| `PERRY_BENCHMARK_LLM_MODEL` | `gpt-5.4-nano` | Paid OpenAI chat model every benchmark-grid Turn runs on |
+| `PERRY_OPENAI_REASONING_EFFORT` | `none` | Reasoning effort for the OpenAI models (`none` is the cheapest, and the only one the API accepts with tools) |
+| `PERRY_EMBEDDING_MODEL` | `nomic-embed-text` | Local Ollama embedding model; changing it re-embeds every Chunk and Summary when Perry next starts |
+| `PERRY_EMBEDDING_DIMENSIONS` | `768` | The embedding model's vector size; changing it resizes the columns and re-embeds at the next start |
 | `PERRY_TTS_MODEL` | `gemini-2.5-flash-preview-tts` | Reads voice answers aloud |
 | `PERRY_TTS_VOICE` | `Kore` | Voice for read-aloud answers |
 | `PERRY_SUMMARY_MODEL` | `qwen3:8b` | Local Ollama model that writes Summaries and extracts Document metadata in the background; give it a zero entry in `prices.toml` |
@@ -213,11 +227,11 @@ All optional; add any of these to `.env` to override the default.
 | `DATABASE_URL` | `postgresql://perry:perry@127.0.0.1:5433/perry` | The Postgres Perry uses |
 | `PERRY_RETRY_DELAY_SECONDS` | `2` | Wait before a failed step's one retry |
 | `PERRY_TURN_TOKEN_CEILING` | `50000` | A Turn stops and reports its findings past this many tokens |
-| `PERRY_DAILY_CAP_USD` | `1.00` | New Turns and ingestion are refused past this until local midnight |
+| `PERRY_DAILY_CAP_USD` | `0.50` | New Turns and ingestion are refused past this until local midnight |
 | `PERRY_COLBERT_MODEL` | `answerdotai/answerai-colbert-small-v1` | Local model for the ColBERT Retrieval Technique (downloaded on first use, runs on the CPU); changing it re-encodes every Chunk at next start; empty turns ColBERT off |
 | `PERRY_SHOW_FOUND_WITH` | `true` | End answers from your Documents with the "Found with" line naming the Retrieval Technique; `false` turns it off |
 | `PERRY_PICKING_MODE` | `cascade` | How the Knowledge Agent picks a Retrieval Technique: `semantic` (nearest example questions), `logical` (the model chooses from the descriptions) or `cascade` (semantic when clearly closest, else logical). The sidebar's forced technique wins over all of them |
-| `PERRY_CASCADE_MARGIN` | `0.074` | How much nearer (cosine similarity) the closest technique's examples must be than the runner-up's for `cascade` to pick semantically; tuned on the eval set, never the benchmark (see [Eval set](#eval-set)) |
+| `PERRY_CASCADE_MARGIN` | `0.116` | How much nearer (cosine similarity) the closest technique's examples must be than the runner-up's for `cascade` to pick semantically; tuned on the eval set, never the benchmark (see [Eval set](#eval-set)) |
 | `PERRY_PRICES_FILE` | `prices.toml` | Price table, USD per million tokens per model |
 | `PERRY_ANALYST_PASSWORD` | `perry_analyst` | Password of the read-only `perry_analyst` role |
 | `PERRY_ANALYSIS_TIMEOUT_MS` | `10000` | Statement timeout for the Analysis Agent's SQL |
@@ -234,7 +248,7 @@ All optional; add any of these to `.env` to override the default.
 - **Speed on the free tier:** Gemini Flash allows 5 requests/minute, and Perry paces itself to 4. A Turn makes 3-6 model calls, so expect about 1-2 minutes per answer.
 - **Privacy:** on the free tier, Google may use what you send to improve its products. Don't upload anything confidential.
 - **Scanned PDF pages** (no extractable text) are rendered to images and transcribed by the vision model (the chat model, `PERRY_LLM_MODEL`), then cited by page like any other. The estimate shown before ingesting includes one transcription per such page, and the calls count toward usage. A page whose transcription fails is listed after upload.
-- **Summaries (local model):** after an upload returns, a background job asks the local model (Ollama, `PERRY_SUMMARY_MODEL`, default `qwen3:8b`: `ollama pull qwen3:8b`) for one Summary per Document plus its date and topic, reading the start of the Document (about 2,500 tokens). On a CPU this takes minutes per Document; the sidebar shows "Summarising N Documents…" meanwhile, and the Document Summaries technique skips Documents that aren't ready. If Ollama isn't running, the Document stays searchable, is marked failed, and is retried on the next start. The upload estimate counts the local calls as free (only embedding the Summary is paid). The `python -m perry.ingest` CLI doesn't summarise; the app does it for pending Documents when it next starts.
+- **Summaries (local model):** after an upload returns, a background job asks the local model (Ollama, `PERRY_SUMMARY_MODEL`, default `qwen3:8b`: `ollama pull qwen3:8b`) for one Summary per Document plus its date and topic, reading the start of the Document (about 2,500 tokens). On a CPU this takes minutes per Document; the sidebar shows "Summarising N Documents…" meanwhile, and the Document Summaries technique skips Documents that aren't ready. If Ollama isn't running, the Document stays searchable, is marked failed, and is retried on the next start. The upload estimate counts the local calls as free. The `python -m perry.ingest` CLI doesn't summarise; the app does it for pending Documents when it next starts.
 - **ColBERT** keeps its own index under `<app-data>\colbert`, beside Postgres (docs/adr/0002). Every upload updates both before it returns, and a failed upload leaves both as they were. Uploads take a little longer while ColBERT encodes the text on the CPU (roughly 7 Chunks a second), and the first one downloads the model (~130 MB). At start, Perry encodes any Chunks stored before ColBERT existed and rebuilds the index if it doesn't match Postgres; deleting the folder is safe.
-- **Changing the embedding model** or its dimension means re-ingesting every Document.
-- **Usage:** every model call is recorded with its tokens and cost (the sidebar shows today's totals). Prices live in `prices.toml`; edit it to match current pricing. A Turn stops at `PERRY_TURN_TOKEN_CEILING` tokens (default 50,000) and reports what it found so far. Embedding tokens are estimated (about 4 characters per token), since the Gemini API doesn't report them. Once today's cost reaches `PERRY_DAILY_CAP_USD` (default $1), new Turns are refused until local midnight; a Turn already running always finishes. Uploads count toward the cap too: they show an estimate and wait for your OK, and are refused up front if they would go over.
+- **Changing the embedding model** (`PERRY_EMBEDDING_MODEL`) or its size: at the next start Perry resizes the vector columns if needed and re-embeds every Chunk and Summary with the new model (docs/adr/0003; about 1 s per Chunk on a CPU). Meanwhile, searches still find Chunks by their words.
+- **Usage:** every model call is recorded with its tokens and cost (the sidebar shows today's totals). Prices live in `prices.toml`; edit it to match current pricing. A Turn stops at `PERRY_TURN_TOKEN_CEILING` tokens (default 50,000) and reports what it found so far. Embedding tokens are estimated (about 4 characters per token). Prices are what you really pay: free-tier Gemini and local models at 0, the OpenAI models at their list prices, so the Daily Cap counts real money. Once today's cost reaches `PERRY_DAILY_CAP_USD` (default $0.50), new Turns are refused until local midnight; a Turn already running always finishes. Uploads count toward the cap too: they show an estimate and wait for your OK, and are refused up front if they would go over.

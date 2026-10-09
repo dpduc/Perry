@@ -307,8 +307,9 @@ def test_the_grid_command_runs_the_named_setups_in_the_benchmark_database(
     monkeypatch.setattr(grid, "prepare", lambda setups, docs: events.append(("prepare", setups)))
     monkeypatch.setattr(grid, "ask_perry", scripted_ask({}))
     monkeypatch.setattr(run, "RESULTS_DIR", tmp_path)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
-    run.main(["grid", "--only", "hyde,always-hybrid"])
+    run.main(["grid", "--only", "hyde,always-hybrid", "--yes"])
 
     assert run.BENCHMARK_DATABASE_URL.endswith("/perry_benchmark")
     assert events == ["database", ("prepare", ["hybrid_search", "hyde"])]
@@ -316,3 +317,44 @@ def test_the_grid_command_runs_the_named_setups_in_the_benchmark_database(
     assert {setup for setup, _ in rows} == {"hybrid_search", "hyde"}
     assert len(rows) == 2 * len(load_questions(run.QUESTIONS_PATH))
     assert "| hyde | 23/23 |" in (tmp_path / "GRID.md").read_text(encoding="utf-8")
+
+
+def test_the_grid_shows_an_estimate_and_asks_nothing_until_it_is_accepted(
+    monkeypatch, tmp_path, capsys
+):
+    monkeypatch.setattr(run, "_use_benchmark_database", lambda: None)
+    monkeypatch.setattr(grid, "prepare", lambda setups, docs: None)
+    asked = []
+    monkeypatch.setattr(grid, "ask_perry", lambda setup, question: asked.append(question))
+    monkeypatch.setattr(run, "RESULTS_DIR", tmp_path)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    questions = load_questions(run.QUESTIONS_PATH)
+
+    with pytest.raises(SystemExit, match="Not started"):
+        run.run_grid(questions, ["hyde"], rerun=False, ask=lambda prompt: "n")
+
+    assert asked == []
+    shown = capsys.readouterr().out
+    assert f"{len(questions)} Turns to ask on gpt-5.4-nano: about $" in shown
+
+
+def test_the_estimate_prices_the_turns_left_on_the_paid_model(tmp_path):
+    questions = load_questions(run.QUESTIONS_PATH)
+
+    turns = grid.turns_to_ask(questions, ["hyde", "colbert"], tmp_path / "grid.jsonl", False)
+
+    assert turns == 2 * len(questions)
+    per_turn = (grid.TURN_INPUT_TOKENS * 0.20 + grid.TURN_OUTPUT_TOKENS * 1.25) / 1_000_000
+    assert grid.estimate_usd(turns, "gpt-5.4-nano") == pytest.approx(turns * per_turn)
+
+
+def test_the_grid_refuses_to_start_without_the_paid_key(monkeypatch, tmp_path):
+    monkeypatch.setattr(run, "_use_benchmark_database", lambda: None)
+    prepared = []
+    monkeypatch.setattr(grid, "prepare", lambda setups, docs: prepared.append(setups))
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    with pytest.raises(SystemExit, match="OPENAI_API_KEY"):
+        run.run_grid(load_questions(run.QUESTIONS_PATH), ["hyde"], rerun=False)
+
+    assert prepared == []

@@ -14,6 +14,7 @@ every call so edits apply without a restart:
 
 import logging
 import os
+import re
 import tomllib
 import uuid
 from collections.abc import Iterator
@@ -29,7 +30,9 @@ log = logging.getLogger(__name__)
 
 DEFAULT_PRICES_FILE = Path(__file__).resolve().parent.parent / "prices.toml"
 DEFAULT_TURN_TOKEN_CEILING = 50_000
-DEFAULT_DAILY_CAP_USD = 1.0
+DEFAULT_DAILY_CAP_USD = 0.5
+# The date a provider appends to name a model's snapshot, e.g. "-2026-03-17".
+_SNAPSHOT_DATE = re.compile(r"-\d{4}-\d{2}-\d{2}$")
 
 
 @dataclass(frozen=True)
@@ -155,8 +158,11 @@ def record(kind: str, model: str, input_tokens: int, output_tokens: int = 0) -> 
 
 
 def cost(model: str, input_tokens: int, output_tokens: int = 0) -> float:
-    """USD for a call, from the price table. Unpriced models cost 0 (with a warning)."""
-    rates = _prices().get(model)
+    """USD for a call, from the price table. A dated snapshot ("gpt-5.4-mini-2026-03-17",
+    as OpenAI's replies name it) is priced as its model. Unpriced models cost 0 (with a
+    warning)."""
+    prices = _prices()
+    rates = prices.get(model) or prices.get(_SNAPSHOT_DATE.sub("", model))
     if rates is None:
         log.warning("No price for model %r in %s; recording its cost as 0", model, _prices_file())
         return 0.0
