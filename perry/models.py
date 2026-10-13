@@ -499,6 +499,22 @@ def summary_model_hint() -> str:
     )
 
 
+def local_models_problem() -> str | None:
+    """Why the local models (embeddings and Summaries, on Ollama) can't be reached, as one
+    line for the Owner, or None when they can. Asked before serving Perry to others."""
+    import urllib.error
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(f"{OLLAMA_URL}/api/tags", timeout=3):
+            return None
+    except (urllib.error.URLError, OSError):
+        return (
+            f"Ollama isn't reachable at {OLLAMA_URL} (PERRY_OLLAMA_URL). Start it with "
+            "`ollama serve` (or open the Ollama app): Perry embeds every question there."
+        )
+
+
 def summary_model_name() -> str:
     """The name the usage ledger prices summary calls by."""
     return _provider().summary_model_name

@@ -55,6 +55,27 @@ def own_thread(user: users.User, thread_id: str | None) -> None:
         raise gr.Error(str(threads.ThreadNotFound()))
 
 
+OWNER_ONLY = "Only the Owner can do that."
+
+
+def owner_of(request: gr.Request | None) -> users.User:
+    """The Owner, if Gradio's request is theirs; refused for anyone else (ADR-0004)."""
+    user = user_of(request)
+    if not user.is_owner:
+        raise gr.Error(OWNER_ONLY)
+    return user
+
+
+# The sidebar's Owner-only controls: Document upload, Dataset upload, Workspace connect.
+OWNER_CONTROLS = ("documents", "datasets", "workspace")
+
+
+def owner_controls(request: gr.Request) -> list:
+    """Show the Owner-only controls (hidden until this says otherwise) to the Owner only."""
+    shown = user_of(request).is_owner
+    return [gr.update(visible=shown) for _ in OWNER_CONTROLS]
+
+
 def logged_in_as(request: gr.Request) -> str:
     """The sidebar's note on who is logged in."""
     return f"Logged in as **{user_of(request).profile.display_name}**"
@@ -264,8 +285,9 @@ def unlock_threads():
     return gr.update(interactive=True), gr.update(interactive=True)
 
 
-def propose_upload(files: list[str] | None):
-    """Show what ingesting the uploaded files would cost, and wait for the user's OK."""
+def propose_upload(request: gr.Request, files: list[str] | None):
+    """Show what ingesting the uploaded files would cost, and wait for the Owner's OK."""
+    owner_of(request)
     if not files:
         return gr.skip(), gr.skip(), gr.skip()
     estimate = ingest.estimate_ingestion([Path(file) for file in files])
@@ -275,11 +297,12 @@ def propose_upload(files: list[str] | None):
         return [], str(refused), gr.update(visible=False)
     if not estimate.tokens:
         # Nothing to pay for (e.g. every file is unchanged): no need to ask.
-        return [], *ingest_upload(files)
+        return [], *ingest_upload(request, files)
     return files, f"{estimate.describe()} Ingest now?", gr.update(visible=True)
 
 
-def ingest_upload(files: list[str]):
+def ingest_upload(request: gr.Request, files: list[str]):
+    owner_of(request)
     try:
         results = ingest.ingest_files([Path(file) for file in files])
     except ingest.OverBudget as refused:
@@ -293,7 +316,8 @@ def cancel_upload():
     return [], "Nothing ingested.", gr.update(visible=False)
 
 
-def upload_datasets(files: list[str] | None) -> tuple[str, str]:
+def upload_datasets(request: gr.Request, files: list[str] | None) -> tuple[str, str]:
+    owner_of(request)
     if not files:
         return gr.skip(), gr.skip()
     lines = []
@@ -347,7 +371,8 @@ def google_button():
 ACCOUNT_KINDS = [("Test account (fake data only)", "test"), ("Real account", "real")]
 
 
-def connect_google(kind: str | None):
+def connect_google(request: gr.Request, kind: str | None):
+    owner_of(request)
     if kind is None:
         return gr.skip(), "Choose whether this is a test or a real account first."
     try:
@@ -386,28 +411,32 @@ def build(privacy_notice: str = "") -> gr.Blocks:
                 label="Retrieval Technique",
                 info="Auto lets Perry pick; choose one to force it for the next questions.",
             )
-            uploader = gr.File(
-                file_count="multiple", file_types=[".pdf", ".md", ".txt"], label="Upload"
-            )
-            upload_status = gr.Markdown()
+            # Owner-only controls start hidden; owner_controls shows them to the Owner.
+            with gr.Column(visible=False) as document_controls:
+                uploader = gr.File(
+                    file_count="multiple", file_types=[".pdf", ".md", ".txt"], label="Upload"
+                )
+                upload_status = gr.Markdown()
+                with gr.Row(visible=False) as upload_choice:
+                    ingest_button = gr.Button("Ingest", variant="primary", size="sm")
+                    cancel_button = gr.Button("Cancel", size="sm")
             summarising = gr.Markdown()
             # Summaries are written in the background, so the count is polled.
             summarising_timer = gr.Timer(10)
-            uploaded = gr.State([])  # files waiting for the user's OK to ingest
-            with gr.Row(visible=False) as upload_choice:
-                ingest_button = gr.Button("Ingest", variant="primary", size="sm")
-                cancel_button = gr.Button("Cancel", size="sm")
+            uploaded = gr.State([])  # files waiting for the Owner's OK to ingest
             gr.Markdown("### Datasets")
-            dataset_uploader = gr.File(
-                file_count="multiple", file_types=[".csv", ".xlsx"], label="Upload data"
-            )
-            dataset_status = gr.Markdown()
+            with gr.Column(visible=False) as dataset_controls:
+                dataset_uploader = gr.File(
+                    file_count="multiple", file_types=[".csv", ".xlsx"], label="Upload data"
+                )
+                dataset_status = gr.Markdown()
             datasets_shown = gr.Markdown(dataset_list)
             usage_status = gr.Markdown()
-            gr.Markdown("### Calendar and email")
-            account_kind = gr.Radio(ACCOUNT_KINDS, value=None, label="Account")
-            google = gr.Button()
-            google_status = gr.Markdown()
+            with gr.Column(visible=False) as workspace_controls:
+                gr.Markdown("### Calendar and email")
+                account_kind = gr.Radio(ACCOUNT_KINDS, value=None, label="Account")
+                google = gr.Button()
+                google_status = gr.Markdown()
 
         chatbot = gr.Chatbot(height="75vh", label="Perry")
         # The Confirmation card: one Write Action, shown exactly as it will be performed.
@@ -495,6 +524,12 @@ def build(privacy_notice: str = "") -> gr.Blocks:
             upload_datasets, dataset_uploader, [dataset_status, datasets_shown]
         )
         demo.load(logged_in_as, None, who, api_name="logged_in_as")
+        demo.load(
+            owner_controls,
+            None,
+            [document_controls, dataset_controls, workspace_controls],
+            api_name="owner_controls",
+        )
         demo.load(sidebar_status, None, status_outputs)
         demo.load(summarising_status, None, summarising)
         summarising_timer.tick(summarising_status, None, summarising, show_progress="hidden")
