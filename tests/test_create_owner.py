@@ -39,7 +39,11 @@ def test_a_second_run_fails_clearly_and_keeps_the_first_owner(database, capsys):
 def test_existing_threads_are_given_to_the_owner(database):
     from perry import threads, users
 
-    before = [threads.create("From before there were Users"), threads.create("Another one")]
+    # Threads from before there were Users belong to no one.
+    before = ["old-thread-1", "old-thread-2"]
+    with database.pool().connection() as conn:
+        for thread in before:
+            conn.execute("INSERT INTO threads (id, title) VALUES (%s, 'Old')", (thread,))
 
     create_owner(*OWNER)
 

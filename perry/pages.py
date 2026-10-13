@@ -30,6 +30,7 @@ PAGE = """<!doctype html>
   th, td {{ text-align: left; padding: .4rem .3rem; border-bottom: 1px solid #e4e4e0; }}
   section {{ margin-top: 2rem; }}
   .error {{ color: #a3261b; margin-top: 1rem; }}
+  .saved {{ color: #2f5d50; margin-top: 1rem; }}
   .notice {{ color: #5b5b57; font-size: .85rem; margin-top: 1rem; }}
 </style></head>
 <body><main>{body}</main></body></html>"""

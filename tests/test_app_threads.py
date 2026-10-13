@@ -1,14 +1,16 @@
-"""Switching Threads in the UI: the picker lists every Thread and can't switch mid-Turn."""
+"""Switching Threads in the UI: the picker lists the User's Threads and can't switch mid-Turn."""
 
 
-def test_threads_created_after_the_ui_was_built_are_listed_on_page_load(perry):
+def test_threads_created_after_the_ui_was_built_are_listed_on_page_load(perry, owner):
+    from logins import request_as
+
     from perry import app
 
     app.build()
     perry.script("Hi!")
     perry.send("Hello there")
 
-    listed = app.thread_choices()["choices"]
+    listed = app.thread_choices(request_as(owner))["choices"]
 
     assert perry.thread_id in [thread_id for _title, thread_id in listed]
 

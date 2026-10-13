@@ -48,6 +48,13 @@ def user_of(request: gr.Request | None) -> users.User:
     return user
 
 
+def own_thread(user: users.User, thread_id: str | None) -> None:
+    """Refuse (as if it didn't exist) a Thread that isn't `user`'s. None, a Thread not
+    started yet, is fine."""
+    if thread_id is not None and not threads.belongs_to(thread_id, user):
+        raise gr.Error(str(threads.ThreadNotFound()))
+
+
 OWNER_ONLY = "Only the Owner can do that."
 
 
@@ -123,16 +130,17 @@ def answer(
     """Run the Turn (`voice_turn` when the request came by voice), forcing `technique`
     unless it is Auto. Outputs: chat, Thread, Thread picker, then `show()`'s card outputs."""
     user = user_of(request)
+    own_thread(user, thread_id)
     text, images = message.get("text", ""), message.get("files", [])
     if not text.strip() and not images:
         return history, thread_id, gr.skip(), *[gr.skip() for _ in confirmation_card(None)]
     if thread_id is None:
-        thread_id = threads.create(text)
+        thread_id = threads.create(user, text)
     # A pending Confirmation is cancelled by this message; the reply says so.
     forced = None if technique in (None, AUTO) else technique
     outcome = run_turn(user, thread_id, text, images=images, turn_id=voice_turn, technique=forced)
     history, *card = show(outcome, history)
-    picker = gr.update(choices=threads.list_recent(), value=thread_id)
+    picker = gr.update(choices=threads.list_recent(user), value=thread_id)
     return history, thread_id, picker, *card
 
 
@@ -168,6 +176,7 @@ def approve(
 ):
     """Approve the waiting Write Action with the card's fields (edited or not)."""
     user = user_of(request)
+    own_thread(user, thread_id)
     if thread_id is None or waiting is None:
         return history, *confirmation_card(None)
     edits = {
@@ -187,6 +196,7 @@ def reject(
 ):
     """Reject the waiting Write Action; the note goes to Perry to revise."""
     user = user_of(request)
+    own_thread(user, thread_id)
     if thread_id is None or waiting is None:
         return history, *confirmation_card(None)
     shown = f"Rejected: {note}" if note.strip() else "Rejected."
@@ -194,14 +204,18 @@ def reject(
     return show(resume_turn(user, thread_id, Reject(note.strip())), history)
 
 
-def hear(recording: str | None, history: list[dict], thread_id: str | None):
+def hear(
+    request: gr.Request, recording: str | None, history: list[dict], thread_id: str | None
+):
     """Push-to-talk: transcribe the recording and show it as the user's message.
     Outputs: message, chat, recorder, and the voice Turn (None if nothing is sent)."""
+    user = user_of(request)
+    own_thread(user, thread_id)
     if not recording:
         return gr.skip(), history, None, None
     turn_id = voice.new_turn()
     try:
-        transcript = voice.transcribe(Path(recording).read_bytes(), thread_id, turn_id)
+        transcript = voice.transcribe(user, Path(recording).read_bytes(), thread_id, turn_id)
     except usage.DailyCapReached as refused:
         return EMPTY, [*history, {"role": "assistant", "content": str(refused)}], None, None
     except Exception as error:  # noqa: BLE001 - tell the user, keep the UI usable
@@ -214,15 +228,19 @@ def hear(recording: str | None, history: list[dict], thread_id: str | None):
     return message, [*history, {"role": "user", "content": transcript}], None, turn_id
 
 
-def read_aloud(turn_id: str | None, history: list[dict], thread_id: str | None):
+def read_aloud(
+    request: gr.Request, turn_id: str | None, history: list[dict], thread_id: str | None
+):
     """Speak the latest answer, only when the request came by voice (as Turn `turn_id`)."""
+    user = user_of(request)
+    own_thread(user, thread_id)
     if turn_id is None or not history or history[-1]["role"] != "assistant":
         return None
     text = _text(history[-1]["content"])
     if not text:
         return None
     try:
-        speech = voice.read_aloud(text, thread_id, turn_id)
+        speech = voice.read_aloud(user, text, thread_id, turn_id)
     except Exception as error:  # noqa: BLE001 - the text answer is already shown
         gr.Warning(f"Couldn't read the answer aloud: {error}")
         return None
@@ -240,8 +258,9 @@ def _text(content) -> str:
     return ""
 
 
-def open_thread(thread_id: str | None):
-    if not thread_id:
+def open_thread(request: gr.Request, thread_id: str | None):
+    """Show the Thread. Another User's Thread opens as if it didn't exist."""
+    if not thread_id or not threads.belongs_to(thread_id, user_of(request)):
         return [], None, *confirmation_card(None)
     history = []
     for message in thread_history(thread_id):
@@ -254,9 +273,9 @@ def new_thread():
     return [], None, gr.update(value=None), *confirmation_card(None)
 
 
-def thread_choices():
-    """The Thread picker's list as it is now (the page may have been built long ago)."""
-    return gr.update(choices=threads.list_recent())
+def thread_choices(request: gr.Request):
+    """The User's Thread picker list as it is now (the page may have been built long ago)."""
+    return gr.update(choices=threads.list_recent(user_of(request)))
 
 
 def lock_threads():
@@ -384,11 +403,11 @@ def build(privacy_notice: str = "") -> gr.Blocks:
         with gr.Sidebar():
             gr.Markdown("## Perry")
             who = gr.Markdown()
+            gr.Button("Profile", link="/profile", size="sm")
             gr.Button("Log out", link="/logout", size="sm")
             new_button = gr.Button("New thread", variant="primary")
-            thread_picker = gr.Dropdown(
-                choices=threads.list_recent(), label="Threads", value=None
-            )
+            # Filled on page load with the User's own Threads.
+            thread_picker = gr.Dropdown(choices=[], label="Threads", value=None)
             gr.Markdown("### Documents")
             technique = gr.Dropdown(
                 choices=technique_choices(),

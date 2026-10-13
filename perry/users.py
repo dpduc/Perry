@@ -26,6 +26,7 @@ from psycopg import errors
 from perry import db
 
 MIN_PASSWORD_CHARS = 10
+MAX_ABOUT_CHARS = 300
 SESSION_DAYS = 14
 SESSION_SECONDS = SESSION_DAYS * 24 * 60 * 60
 SESSION_SECRET_VARIABLE = "PERRY_SESSION_SECRET"
@@ -157,6 +158,26 @@ def get(user_id: int) -> User | None:
     with db.pool().connection() as conn:
         row = conn.execute("SELECT * FROM users WHERE id = %s", (user_id,)).fetchone()
     return _user(row) if row else None
+
+
+def update_profile(user: User, display_name: str, time_zone: str, about: str = "") -> User:
+    """`user` with their Profile changed. Refused if the display name is empty, the time
+    zone isn't a known one, or the about-me is over MAX_ABOUT_CHARS. The about-me may be
+    empty; it is kept as one line (the Supervisor reads it)."""
+    display_name, time_zone = display_name.strip(), time_zone.strip()
+    about = " ".join(about.split())
+    if not display_name:
+        raise Refused("Give a display name.")
+    _check_time_zone(time_zone)
+    if len(about) > MAX_ABOUT_CHARS:
+        raise Refused(f"Keep the about-me line to {MAX_ABOUT_CHARS} characters.")
+    with db.pool().connection() as conn:
+        row = conn.execute(
+            "UPDATE users SET display_name = %s, time_zone = %s, about = %s "
+            "WHERE id = %s RETURNING *",
+            (display_name, time_zone, about, user.id),
+        ).fetchone()
+    return _user(row)
 
 
 def authenticate(username: str, password: str) -> User:

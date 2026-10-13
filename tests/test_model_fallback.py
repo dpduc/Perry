@@ -64,7 +64,7 @@ def ask(text: str) -> str:
     """One Turn, all in one Thread per test (a test's first message opens it)."""
     from perry import threads, users
 
-    thread = _threads.get("current") or threads.create(text)
+    thread = _threads.get("current") or threads.create(users.owner(), text)
     _threads["current"] = thread
     return run_turn(users.owner(), thread, text)
 
@@ -149,7 +149,7 @@ def test_paid_calls_are_priced_by_their_model_in_the_usage_ledger(two_models, pr
     assert usage.today().cost_usd == pytest.approx(0.75)
 
 
-def test_without_a_paid_model_a_used_up_quota_stops_the_turn_and_says_so(database):
+def test_without_a_paid_model_a_used_up_quota_stops_the_turn_and_says_so(owner):
     free = ScriptedChatModel(steps=[daily_quota_used_up()])
     provider = fake_provider(free)
     provider = provider.__class__(
