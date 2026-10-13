@@ -1,4 +1,8 @@
-"""Perry's chat UI. Run with: uv run python -m perry.app"""
+"""Perry's chat UI, served behind the login pages by perry.web. Run with:
+uv run python -m perry.web
+
+Handlers that act for the User take Gradio's request first and get the User with
+`user_of`, never from anything the browser holds."""
 
 from pathlib import Path
 
@@ -7,7 +11,6 @@ import gradio as gr
 from perry import (
     charts,
     datasets,
-    db,
     google_auth,
     ingest,
     models,
@@ -16,6 +19,7 @@ from perry import (
     techniques,
     threads,
     usage,
+    users,
     voice,
     workspace,
 )
@@ -30,6 +34,24 @@ from perry.supervisor import (
 )
 
 EMPTY = {"text": "", "files": []}
+
+LOG_IN_AGAIN = "You're not logged in. Reload the page to log in again."
+
+
+def user_of(request: gr.Request | None) -> users.User:
+    """The User Gradio's request belongs to (perry.web gives Gradio their id as the
+    request's username). Refused if there is none or they are disabled."""
+    username = getattr(request, "username", None)
+    user = users.get(int(username)) if username and str(username).isdigit() else None
+    if user is None or user.disabled:
+        raise gr.Error(LOG_IN_AGAIN)
+    return user
+
+
+def logged_in_as(request: gr.Request) -> str:
+    """The sidebar's note on who is logged in."""
+    return f"Logged in as **{user_of(request).profile.display_name}**"
+
 
 # Every field a Write Action can have: (label, lines, editable). The Confirmation card
 # shows the ones its Write Action takes.
@@ -67,6 +89,7 @@ def technique_choices() -> list[tuple[str, str]]:
 
 
 def answer(
+    request: gr.Request,
     message: dict,
     history: list[dict],
     thread_id: str | None,
@@ -75,6 +98,7 @@ def answer(
 ):
     """Run the Turn (`voice_turn` when the request came by voice), forcing `technique`
     unless it is Auto. Outputs: chat, Thread, Thread picker, then `show()`'s card outputs."""
+    user = user_of(request)
     text, images = message.get("text", ""), message.get("files", [])
     if not text.strip() and not images:
         return history, thread_id, gr.skip(), *[gr.skip() for _ in confirmation_card(None)]
@@ -82,7 +106,7 @@ def answer(
         thread_id = threads.create(text)
     # A pending Confirmation is cancelled by this message; the reply says so.
     forced = None if technique in (None, AUTO) else technique
-    outcome = run_turn(thread_id, text, images=images, turn_id=voice_turn, technique=forced)
+    outcome = run_turn(user, thread_id, text, images=images, turn_id=voice_turn, technique=forced)
     history, *card = show(outcome, history)
     picker = gr.update(choices=threads.list_recent(), value=thread_id)
     return history, thread_id, picker, *card
@@ -111,8 +135,15 @@ def confirmation_card(confirmation: Confirmation | None) -> list:
     return [confirmation, gr.update(visible=True), summary, *boxes, ""]
 
 
-def approve(thread_id: str | None, waiting: Confirmation | None, history: list[dict], *values):
+def approve(
+    request: gr.Request,
+    thread_id: str | None,
+    waiting: Confirmation | None,
+    history: list[dict],
+    *values,
+):
     """Approve the waiting Write Action with the card's fields (edited or not)."""
+    user = user_of(request)
     if thread_id is None or waiting is None:
         return history, *confirmation_card(None)
     edits = {
@@ -120,16 +151,23 @@ def approve(thread_id: str | None, waiting: Confirmation | None, history: list[d
         for name, value in zip(CARD_FIELDS, values, strict=True)
         if name in waiting.fields
     }
-    return show(resume_turn(thread_id, Approve(edits)), history)
+    return show(resume_turn(user, thread_id, Approve(edits)), history)
 
 
-def reject(thread_id: str | None, waiting: Confirmation | None, history: list[dict], note: str):
+def reject(
+    request: gr.Request,
+    thread_id: str | None,
+    waiting: Confirmation | None,
+    history: list[dict],
+    note: str,
+):
     """Reject the waiting Write Action; the note goes to Perry to revise."""
+    user = user_of(request)
     if thread_id is None or waiting is None:
         return history, *confirmation_card(None)
     shown = f"Rejected: {note}" if note.strip() else "Rejected."
     history = [*history, {"role": "user", "content": shown}]
-    return show(resume_turn(thread_id, Reject(note.strip())), history)
+    return show(resume_turn(user, thread_id, Reject(note.strip())), history)
 
 
 def hear(recording: str | None, history: list[dict], thread_id: str | None):
@@ -317,6 +355,8 @@ def build(privacy_notice: str = "") -> gr.Blocks:
 
         with gr.Sidebar():
             gr.Markdown("## Perry")
+            who = gr.Markdown()
+            gr.Button("Log out", link="/logout", size="sm")
             new_button = gr.Button("New thread", variant="primary")
             thread_picker = gr.Dropdown(
                 choices=threads.list_recent(), label="Threads", value=None
@@ -436,6 +476,7 @@ def build(privacy_notice: str = "") -> gr.Blocks:
         dataset_uploader.upload(
             upload_datasets, dataset_uploader, [dataset_status, datasets_shown]
         )
+        demo.load(logged_in_as, None, who, api_name="logged_in_as")
         demo.load(sidebar_status, None, status_outputs)
         demo.load(summarising_status, None, summarising)
         summarising_timer.tick(summarising_status, None, summarising, show_progress="hidden")
@@ -446,13 +487,7 @@ def build(privacy_notice: str = "") -> gr.Blocks:
 
 
 if __name__ == "__main__":
-    # Before anything runs: switches tracing off if a real account is connected.
-    notice = privacy.startup() or ""
-    if notice:
-        print(notice)
-    db.init_schema()
-    # e.g. a changed embedding model, Documents stored before ColBERT, or after a crash.
-    ingest.ensure_indexes_current()
-    # Retry Summaries that failed (e.g. the local model wasn't running) and finish pending ones.
-    summaries.resume()
-    build(notice).launch(server_name="127.0.0.1", allowed_paths=[str(charts.directory())])
+    # The chat UI is only served behind the login pages.
+    from perry import web
+
+    web.main()

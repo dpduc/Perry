@@ -1,4 +1,5 @@
-"""The one Postgres database: Documents, Chunks, Threads, Datasets and LangGraph checkpoints."""
+"""The one Postgres database: Users, Documents, Chunks, Threads, Datasets and LangGraph
+checkpoints."""
 
 import os
 import time
@@ -82,6 +83,28 @@ CREATE TABLE IF NOT EXISTS threads (
     title      text NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- Users (perry.users). At most one is the Owner. Usernames are unique ignoring case.
+-- Bumping session_version ends every session the User has open.
+CREATE TABLE IF NOT EXISTS users (
+    id              bigserial PRIMARY KEY,
+    username        text NOT NULL,
+    password_hash   text NOT NULL,
+    is_owner        boolean NOT NULL DEFAULT false,
+    disabled        boolean NOT NULL DEFAULT false,
+    display_name    text NOT NULL,
+    time_zone       text NOT NULL,
+    about           text NOT NULL DEFAULT '',
+    session_version int NOT NULL DEFAULT 0,
+    created_at      timestamptz NOT NULL DEFAULT now(),
+    last_login_at   timestamptz
+);
+CREATE UNIQUE INDEX IF NOT EXISTS users_username_idx ON users (lower(username));
+CREATE UNIQUE INDEX IF NOT EXISTS users_one_owner_idx ON users (is_owner) WHERE is_owner;
+-- The User each Thread belongs to. NULL only for Threads from before Users existed,
+-- until create-owner gives them to the Owner.
+ALTER TABLE threads ADD COLUMN IF NOT EXISTS user_id bigint REFERENCES users(id);
+CREATE INDEX IF NOT EXISTS threads_user_idx ON threads (user_id);
 
 -- Datasets are real tables in the analytics schema; this is their registry.
 CREATE SCHEMA IF NOT EXISTS analytics;

@@ -46,7 +46,7 @@ def fresh_quota():
 
 
 @pytest.fixture
-def two_models(database):
+def two_models(owner):
     """Turns answered by a free and a paid scripted model, free first."""
     free, fallback = ScriptedChatModel(), ScriptedChatModel()
     provider = fake_provider(free)
@@ -62,11 +62,11 @@ _threads: dict[str, str] = {}
 
 def ask(text: str) -> str:
     """One Turn, all in one Thread per test (a test's first message opens it)."""
-    from perry import threads
+    from perry import threads, users
 
     thread = _threads.get("current") or threads.create(text)
     _threads["current"] = thread
-    return run_turn(thread, text)
+    return run_turn(users.owner(), thread, text)
 
 
 def test_the_free_model_answers_while_it_can(two_models):

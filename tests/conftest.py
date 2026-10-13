@@ -23,8 +23,11 @@ os.environ["PERRY_PICKING_MODE"] = "logical"
 # No real ColBERT model (torch, and an index in the real app-data folder) unless a test
 # asks for one; tests that need ColBERT use the fake encoder.
 os.environ["PERRY_COLBERT_MODEL"] = ""
+# Sessions are signed with this; the served app refuses to start without one.
+os.environ["PERRY_SESSION_SECRET"] = "test-session-secret"
 
 from fakes import ScriptedChatModel, fake_embed, fake_provider
+from logins import OWNER_PASSWORD, OWNER_USERNAME, log_in
 
 
 @pytest.fixture
@@ -43,7 +46,7 @@ def database():
 
     db.init_schema()
     with db.pool().connection() as conn:
-        conn.execute("TRUNCATE documents, chunks, threads RESTART IDENTITY CASCADE")
+        conn.execute("TRUNCATE documents, chunks, threads, users RESTART IDENTITY CASCADE")
         conn.execute("TRUNCATE datasets")
         tables = "SELECT tablename FROM pg_tables WHERE schemaname = 'analytics'"
         for row in conn.execute(tables).fetchall():
@@ -51,6 +54,32 @@ def database():
             conn.execute(sql.SQL("DROP TABLE {}").format(table))
         conn.execute("TRUNCATE usage_ledger, store_facts")
     return db
+
+
+@pytest.fixture
+def owner(database):
+    """The Owner, created as the create-owner command does."""
+    from perry import users
+
+    return users.create_owner(OWNER_USERNAME, OWNER_PASSWORD, "Olive Owner", "Europe/London")
+
+
+@pytest.fixture
+def client(owner):
+    """A browser on the served app (login pages with the Gradio UI mounted), not logged in."""
+    from fastapi.testclient import TestClient
+
+    from perry import web
+
+    with TestClient(web.create_app()) as browser:
+        yield browser
+
+
+@pytest.fixture
+def owner_client(client):
+    """A browser logged in as the Owner."""
+    log_in(client, OWNER_USERNAME, OWNER_PASSWORD)
+    return client
 
 
 @pytest.fixture(scope="session")
@@ -79,8 +108,9 @@ class Perry:
     were `consulted()`.
     """
 
-    def __init__(self, model: ScriptedChatModel, documents_dir):
+    def __init__(self, model: ScriptedChatModel, documents_dir, user):
         self.model = model
+        self.user = user  # the User sending the messages (the Owner, by default)
         self.thread_id: str | None = None
         self._documents_dir = documents_dir
 
@@ -104,7 +134,7 @@ class Perry:
         if self.thread_id is None:
             self.thread_id = threads.create(message)
         return supervisor.run_turn(
-            self.thread_id, message, images=list(images), technique=technique
+            self.user, self.thread_id, message, images=list(images), technique=technique
         )
 
     def resume(self, decision):
@@ -112,7 +142,7 @@ class Perry:
         note) and return what the Turn shows next: a reply or another Confirmation."""
         from perry import supervisor
 
-        return supervisor.resume_turn(self.thread_id, decision)
+        return supervisor.resume_turn(self.user, self.thread_id, decision)
 
     def say(self, audio: bytes) -> "VoiceReply":
         """Run one Turn from recorded speech, as push-to-talk does: the transcription is
@@ -124,7 +154,7 @@ class Perry:
         transcript = voice.transcribe(audio, self.thread_id, turn_id)
         if self.thread_id is None:
             self.thread_id = threads.create(transcript)
-        text = supervisor.run_turn(self.thread_id, transcript, turn_id=turn_id)
+        text = supervisor.run_turn(self.user, self.thread_id, transcript, turn_id=turn_id)
         speech = voice.read_aloud(text, self.thread_id, turn_id)
         return VoiceReply(transcript, text, speech.audio, speech.note)
 
@@ -146,12 +176,13 @@ def chat_model() -> ScriptedChatModel:
 
 
 @pytest.fixture
-def perry(database, chat_model, tmp_path):
-    """A Perry whose every model call goes to `chat_model` and the fake embeddings."""
+def perry(owner, chat_model, tmp_path):
+    """A Perry, used by the Owner, whose every model call goes to `chat_model` and the
+    fake embeddings."""
     from perry import models
 
     with models.use(fake_provider(chat_model)):
-        yield Perry(chat_model, tmp_path)
+        yield Perry(chat_model, tmp_path, owner)
 
 
 @pytest.fixture

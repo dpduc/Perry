@@ -35,6 +35,7 @@ Then create `.env` in the repo root (it's gitignored, never commit it):
 ```ini
 GEMINI_API_KEY=...                   # https://aistudio.google.com/apikey (the free tier is enough)
 OPENAI_API_KEY=...                   # optional, paid: answers when Gemini's free quota is used up, and runs the benchmark grid
+PERRY_SESSION_SECRET=...             # signs login sessions: uv run python -c "import secrets; print(secrets.token_urlsafe(32))"
 # Optional LangSmith tracing; the endpoint must match your account's region:
 # api. (US), eu.api. or apac.api.smith.langchain.com (a 403 on every call means a region mismatch)
 LANGCHAIN_TRACING_V2=true
@@ -49,6 +50,12 @@ ollama pull nomic-embed-text   # embeddings for every Chunk and Summary (needed)
 ollama pull qwen3:8b           # Summaries, Document metadata and RAPTOR (background)
 ```
 
+Create yourself as the Owner, once (it asks for a username, a password of at least 10 characters, a display name and a time zone such as `Europe/London`). Threads from before there were Users become yours:
+
+```powershell
+uv run python -m perry.users create-owner
+```
+
 Everything else has a default; see [Settings](#settings) for the optional overrides.
 
 **Which model does what:** chat (the Supervisor, the Agents, rewriting and picking) runs on Gemini's free tier. When its daily quota is used up (it resets at midnight Pacific time, 14:00 or 15:00 in Bangkok), or Gemini stays overloaded after retries, the call goes to the paid OpenAI model (`PERRY_FALLBACK_LLM_MODEL`) instead, and so does the rest of that day's chat. Without `OPENAI_API_KEY` there is no fallback and Perry says the quota is used up. Embeddings, Summaries and ColBERT run locally and cost nothing. Speech and scanned pages stay on Gemini only.
@@ -56,13 +63,15 @@ Everything else has a default; see [Settings](#settings) for the optional overri
 ## Use
 
 ```powershell
-uv run python -m perry.app              # chat UI at http://127.0.0.1:7860
+uv run python -m perry.web              # Perry at http://127.0.0.1:7860: log in, then chat
 uv run python -m perry.ingest some\folder  # bulk-load Documents (.pdf, .md, .txt); shows the estimated cost and asks first (--yes skips the question)
 ```
 
 Your data lives in the Postgres from `compose.yaml`, in the Docker volume `pgdata`, so it survives restarts. Perry stores each Document as page-numbered Chunks with their embeddings (not the original file), and each Dataset as a table.
 
 ### The UI
+
+Perry asks you to log in first, even when it runs on your own machine; a login lasts 14 days in that browser. *Log out* is at the top of the sidebar.
 
 - **Sidebar:** *New thread* and a *Threads* picker to resume an earlier conversation; *Documents* and *Datasets* upload areas (the Datasets list shows each name with its columns); today's usage (`Today: N tokens · $x of $cap`); and *Calendar and email*, where you pick **Test account** or **Real account** and click **Connect Google**.
 - **Chat:** type in the box (the paperclip attaches images). Below it, **Record** is push-to-talk and the player on the right speaks Perry's answer.

@@ -1,6 +1,7 @@
 """The sidebar's Retrieval Technique dropdown: Auto, or force one technique for the next Turns."""
 
 from fakes import call, last_message
+from logins import request_as
 
 
 def test_the_dropdown_lists_auto_then_every_registered_technique():
@@ -14,7 +15,7 @@ def test_the_dropdown_lists_auto_then_every_registered_technique():
     assert len(labels) == 1 + len(TECHNIQUES)
 
 
-def test_the_technique_chosen_in_the_dropdown_is_forced_for_the_next_turns(perry):
+def test_the_technique_chosen_in_the_dropdown_is_forced_for_the_next_turns(perry, owner):
     from perry import app
 
     perry.add_document("budget.md", "The marketing budget for Q3 is 40,000 dollars.")
@@ -28,13 +29,13 @@ def test_the_technique_chosen_in_the_dropdown_is_forced_for_the_next_turns(perry
             last_message,
         )
         history, thread_id, *_ = app.answer(
-            {"text": question, "files": []}, history, thread_id, chosen
+            request_as(owner), {"text": question, "files": []}, history, thread_id, chosen
         )
 
         assert history[-1]["content"].endswith("Found with: Hybrid search (forced)")
 
 
-def test_auto_lets_the_knowledge_agent_pick(perry):
+def test_auto_lets_the_knowledge_agent_pick(perry, owner):
     from perry import app
 
     perry.add_document("budget.md", "The marketing budget for Q3 is 40,000 dollars.")
@@ -46,7 +47,7 @@ def test_auto_lets_the_knowledge_agent_pick(perry):
     )
 
     history, *_ = app.answer(
-        {"text": "What is my Q3 budget?", "files": []}, [], None, app.AUTO
+        request_as(owner), {"text": "What is my Q3 budget?", "files": []}, [], None, app.AUTO
     )
 
     assert history[-1]["content"].endswith("Found with: Hybrid search (picked logically)")

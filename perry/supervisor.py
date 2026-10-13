@@ -1,6 +1,6 @@
 """The Supervisor: plans each Turn, delegates to Agents, and composes the answer.
 
-Turn interface: `run_turn` answers a message with either the final answer (a str) or
+Turn interface: `run_turn` answers a User's message with either the final answer (a str) or
 a pending `Confirmation` for one Write Action. `resume_turn` continues that Turn with
 the user's decision (`Approve`, with optional edits, or `Reject` with a note), and
 again returns an answer or the next Confirmation. A new message on a Thread with a
@@ -25,6 +25,7 @@ from langgraph.types import Command, StateSnapshot
 from perry import charts, db, models, privacy, retries, usage, workspace
 from perry.agents import analysis, knowledge, task
 from perry.images import user_message
+from perry.users import User
 
 # The per-request override: the Retrieval Technique the Knowledge Agent must use, if any.
 RETRIEVAL_TECHNIQUE = "perry_retrieval_technique"
@@ -220,14 +221,15 @@ class _TurnRun:
 
 
 def run_turn(
+    user: User,
     thread_id: str,
     message: str,
     images: list[str | Path] = (),
     turn_id: str | None = None,
     technique: str | None = None,
 ) -> TurnResult:
-    """Answer `message`, with any attached image files given to the model as well.
-    Returns the answer, or the Confirmation the Turn is waiting for.
+    """Answer `user`'s `message`, with any attached image files given to the model as
+    well. Returns the answer, or the Confirmation the Turn is waiting for.
 
     `turn_id` continues a Turn whose model calls began before the message existed
     (e.g. transcribing a voice request); by default the Turn is new. `technique` (the
@@ -248,8 +250,8 @@ def run_turn(
     return outcome
 
 
-def resume_turn(thread_id: str, decision: Decision) -> TurnResult:
-    """Continue the Turn waiting on a Confirmation with the user's decision.
+def resume_turn(user: User, thread_id: str, decision: Decision) -> TurnResult:
+    """Continue the Turn waiting on a Confirmation with `user`'s decision.
     Returns the answer, or the next Confirmation."""
     graph = supervisor()
     before = graph.get_state(_config(thread_id))
