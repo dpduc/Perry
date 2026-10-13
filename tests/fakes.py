@@ -60,12 +60,15 @@ class ScriptedChatModel(BaseChatModel):
 
     steps: list[Any] = Field(default_factory=list)
     calls: list[list[BaseMessage]] = Field(default_factory=list)
+    # The names of the tools the latest caller bound: the Supervisor's at its own calls.
+    bound_tools: list[str] = Field(default_factory=list)
 
     @property
     def _llm_type(self) -> str:
         return "scripted"
 
     def bind_tools(self, tools, **kwargs) -> "ScriptedChatModel":
+        self.bound_tools = [getattr(t, "name", None) or t.get("name") for t in tools]
         return self
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs) -> ChatResult:
