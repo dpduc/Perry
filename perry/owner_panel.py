@@ -133,3 +133,53 @@ def create_invite():
 def withdraw_invite(code: str):
     users.withdraw_invite(code)
     return back_to_panel()
+
+
+# Users
+
+
+@section
+def users_section(owner: users.User) -> str:
+    rows = "\n".join(_user_row(member, owner) for member in users.all_users())
+    return f"""<section><h2>Users</h2>
+<p>A disabled User can't log in, and is logged out at once. Their Threads and usage are kept.</p>
+<table><tr><th>Username</th><th>Joined</th><th>Last login</th><th>Status</th><th></th></tr>
+{rows}</table>
+</section>"""
+
+
+def _user_row(member: users.Member, owner: users.User) -> str:
+    user = member.user
+    last_login = local_time(member.last_login_at, owner) if member.last_login_at else "never"
+    if user.is_owner:
+        status, action = "active", "Owner"
+    elif user.disabled:
+        status, action = "disabled", _user_button(user, "enable", "Re-enable")
+    else:
+        status, action = "active", _user_button(user, "disable", "Disable")
+    return f"""<tr data-user="{user.id}">
+  <td>{html.escape(user.username)}</td>
+  <td>{local_time(member.joined_at, owner)}</td>
+  <td>{last_login}</td>
+  <td>{status}</td>
+  <td>{action}</td></tr>"""
+
+
+def _user_button(user: users.User, action: str, label: str) -> str:
+    return f"""<form method="post" action="{PATH}/users/{user.id}/{action}">
+    <button class="small" type="submit">{label}</button></form>"""
+
+
+@router.post("/users/{user_id}/disable")
+def disable_user(user_id: int):
+    try:
+        users.disable(user_id)
+    except users.Refused as refused:
+        return back_to_panel(str(refused))
+    return back_to_panel()
+
+
+@router.post("/users/{user_id}/enable")
+def enable_user(user_id: int):
+    users.enable(user_id)
+    return back_to_panel()

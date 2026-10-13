@@ -117,6 +117,14 @@ CREATE TABLE IF NOT EXISTS invites (
     withdrawn_at timestamptz
 );
 
+-- Failed logins (perry.users), for the login limit: a few per username per window.
+-- username is lowercased, and need not be a User's.
+CREATE TABLE IF NOT EXISTS failed_logins (
+    username  text NOT NULL,
+    failed_at timestamptz NOT NULL
+);
+CREATE INDEX IF NOT EXISTS failed_logins_idx ON failed_logins (username, failed_at);
+
 -- Datasets are real tables in the analytics schema; this is their registry.
 CREATE SCHEMA IF NOT EXISTS analytics;
 CREATE TABLE IF NOT EXISTS datasets (

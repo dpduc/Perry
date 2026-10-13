@@ -33,9 +33,15 @@ CREATE_OWNER_COMMAND = "uv run python -m perry.users create-owner"
 INVITE_DAYS = 7
 INVITE_LIFETIME = datetime.timedelta(days=INVITE_DAYS)
 
+MAX_FAILED_LOGINS = 5
+FAILED_LOGIN_MINUTES = 15
+FAILED_LOGIN_WINDOW = datetime.timedelta(minutes=FAILED_LOGIN_MINUTES)
+
 WRONG_LOGIN = "Wrong username or password."
+TOO_MANY_LOGINS = "Too many failed logins. Try again later."
 NO_OWNER = f"Perry has no Owner yet. Create one first with: {CREATE_OWNER_COMMAND}"
 OWNER_EXISTS = "Perry already has an Owner; there can only be one."
+OWNER_CANT_BE_DISABLED = "The Owner can't be disabled."
 _ASK_FOR_ANOTHER = "Ask the Owner for a new one."
 INVITE_UNKNOWN = "That Invite code isn't right. Check it, or ask the Owner for a new one."
 INVITE_USED = f"That Invite has already been used. {_ASK_FOR_ANOTHER}"
@@ -54,6 +60,10 @@ _DUMMY_HASH = _hasher.hash("not anyone's password")
 
 class Refused(Exception):
     """A request about Users that can't be done; the message says why, for the person."""
+
+
+class TooManyLogins(Refused):
+    """A login refused because of too many recent failed logins for that username."""
 
 
 @dataclass(frozen=True)
@@ -151,18 +161,65 @@ def get(user_id: int) -> User | None:
 
 def authenticate(username: str, password: str) -> User:
     """The User with this username and password. Refused with the same WRONG_LOGIN
-    message whether the username or the password is wrong, or the User is disabled."""
+    message whether the username or the password is wrong, or the User is disabled.
+    After MAX_FAILED_LOGINS failures for a username within FAILED_LOGIN_WINDOW, every
+    login with it is refused with TOO_MANY_LOGINS (a TooManyLogins) until the window
+    has passed, even with the right password."""
+    name = username.strip().lower()
+    now = _now()
+    with db.pool().connection() as conn:
+        failures = conn.execute(
+            "SELECT count(*) AS n FROM failed_logins WHERE username = %s AND failed_at > %s",
+            (name, now - FAILED_LOGIN_WINDOW),
+        ).fetchone()["n"]
+        if failures >= MAX_FAILED_LOGINS:
+            raise TooManyLogins(TOO_MANY_LOGINS)
+        row = conn.execute("SELECT * FROM users WHERE lower(username) = %s", (name,)).fetchone()
+    matches = _password_matches(row["password_hash"] if row else _DUMMY_HASH, password)
+    if not matches or row is None or row["disabled"]:
+        with db.pool().connection() as conn:
+            conn.execute(
+                "INSERT INTO failed_logins (username, failed_at) VALUES (%s, %s)", (name, now)
+            )
+        raise Refused(WRONG_LOGIN)
+    with db.pool().connection() as conn:
+        conn.execute("UPDATE users SET last_login_at = %s WHERE id = %s", (now, row["id"]))
+    return _user(row)
+
+
+@dataclass(frozen=True)
+class Member:
+    """A User as the Owner panel lists them: when they joined and last logged in."""
+
+    user: User
+    joined_at: datetime.datetime
+    last_login_at: datetime.datetime | None
+
+
+def all_users() -> list[Member]:
+    """Every User, the Owner first, then in the order they joined."""
+    with db.pool().connection() as conn:
+        rows = conn.execute("SELECT * FROM users ORDER BY is_owner DESC, id").fetchall()
+    return [Member(_user(row), row["created_at"], row["last_login_at"]) for row in rows]
+
+
+def disable(user_id: int) -> None:
+    """Stop a User from logging in, and end every session they have open at once.
+    Their Threads and Usage Ledger rows are kept. Refused for the Owner."""
     with db.pool().connection() as conn:
         row = conn.execute(
-            "SELECT * FROM users WHERE lower(username) = lower(%s)", (username.strip(),)
+            "UPDATE users SET disabled = true, session_version = session_version + 1 "
+            "WHERE id = %s AND NOT is_owner RETURNING id",
+            (user_id,),
         ).fetchone()
-    if not _password_matches(row["password_hash"] if row else _DUMMY_HASH, password):
-        raise Refused(WRONG_LOGIN)
-    if row is None or row["disabled"]:
-        raise Refused(WRONG_LOGIN)
+    if row is None and (found := get(user_id)) is not None and found.is_owner:
+        raise Refused(OWNER_CANT_BE_DISABLED)
+
+
+def enable(user_id: int) -> None:
+    """Let a disabled User log in again. Sessions that disabling ended stay ended."""
     with db.pool().connection() as conn:
-        conn.execute("UPDATE users SET last_login_at = now() WHERE id = %s", (row["id"],))
-    return _user(row)
+        conn.execute("UPDATE users SET disabled = false WHERE id = %s", (user_id,))
 
 
 @dataclass(frozen=True)

@@ -54,6 +54,8 @@ def create_app(blocks: gr.Blocks | None = None, *, secure_cookies: bool = False)
     def log_in(username: str = Form(""), password: str = Form("")):
         try:
             user = users.authenticate(username, password)
+        except users.TooManyLogins as refused:
+            return _login_page(str(refused), username, status_code=429)
         except users.Refused as refused:
             return _login_page(str(refused), username, status_code=401)
         return logged_in(user)
