@@ -62,7 +62,10 @@ def create_app(blocks: gr.Blocks | None = None, *, secure_cookies: bool = False)
 
     def logged_in(user: users.User) -> RedirectResponse:
         """Into Perry, with a new session for `user`."""
-        response = RedirectResponse(f"{CHAT_PATH}/", status_code=303)
+        return with_session(RedirectResponse(f"{CHAT_PATH}/", status_code=303), user)
+
+    def with_session(response, user: users.User):
+        """`response`, also giving the browser a new session for `user`."""
         response.set_cookie(
             SESSION_COOKIE,
             users.start_session(user),
@@ -92,6 +95,18 @@ def create_app(blocks: gr.Blocks | None = None, *, secure_cookies: bool = False)
             return _register_page(form, str(refused), status_code=400)
         return logged_in(user)
 
+    @served.get("/reset", response_class=HTMLResponse)
+    def reset_page(code: str = ""):
+        return _reset_page(code)
+
+    @served.post("/reset")
+    def reset_password(code: str = Form(""), password: str = Form("")):
+        try:
+            user = users.reset_password(code, password)
+        except users.Refused as refused:
+            return _reset_page(code, str(refused), status_code=400)
+        return logged_in(user)
+
     @served.api_route("/logout", methods=["GET", "POST"])
     def log_out():
         response = RedirectResponse("/login", status_code=303)
@@ -99,6 +114,26 @@ def create_app(blocks: gr.Blocks | None = None, *, secure_cookies: bool = False)
         return response
 
     owner_panel.install(served)
+
+    @served.get("/password", response_class=HTMLResponse)
+    def password_page(request: Request):
+        if _user(request) is None:
+            return RedirectResponse("/login", status_code=303)
+        return _password_page()
+
+    @served.post("/password", response_class=HTMLResponse)
+    def change_password(
+        request: Request, current_password: str = Form(""), new_password: str = Form("")
+    ):
+        user = _user(request)
+        if user is None:
+            return RedirectResponse("/login", status_code=303)
+        try:
+            users.change_password(user, current_password, new_password)
+        except users.Refused as refused:
+            return _password_page(str(refused), status_code=400)
+        # Changing it ended every session, this one too; this browser carries on.
+        return with_session(_password_page(changed=True), user)
 
     @served.get("/profile", response_class=HTMLResponse)
     def profile_page(request: Request):
@@ -158,7 +193,9 @@ def _login_page(error: str = "", username: str = "", status_code: int = 200) -> 
          required></label>
   <button type="submit">Log in</button>
 </form>
-<p class="notice">Have an Invite? <a href="/register">Register</a></p>"""
+<p class="notice">Have an Invite? <a href="/register">Register</a></p>
+<p class="notice">Forgot your password? Ask the Owner for a Reset Code, then
+  <a href="/reset">reset it</a>.</p>"""
     return HTMLResponse(PAGE.format(title="Log in · Perry", body=body), status_code=status_code)
 
 
@@ -207,6 +244,22 @@ def _register_page(form: RegisterForm, error: str = "", status_code: int = 200) 
     return pages.page("Register", body, status_code=status_code)
 
 
+def _reset_page(code: str = "", error: str = "", status_code: int = 200) -> HTMLResponse:
+    body = f"""<h1>Reset your password</h1>
+<p>Forgot your password? Ask Perry's Owner for a Reset Code.</p>
+{pages.error_line(error)}
+<form method="post" action="/reset">
+  <label>Reset Code <input name="code" required autocomplete="off"
+         value="{html.escape(code)}"></label>
+  <label>New password (at least {users.MIN_PASSWORD_CHARS} characters)
+    <input name="password" type="password" autocomplete="new-password" required
+           minlength="{users.MIN_PASSWORD_CHARS}"></label>
+  <button type="submit">Reset password</button>
+</form>
+<p class="notice"><a href="/login">Back to log in</a></p>"""
+    return pages.page("Reset password", body, status_code=status_code)
+
+
 def _profile_page(
     profile: users.Profile, error: str = "", saved: bool = False, status_code: int = 200
 ) -> HTMLResponse:
@@ -228,8 +281,26 @@ def _profile_page(
            value="{html.escape(profile.about)}"></label>
   <button type="submit">Save</button>
 </form>
+<p><a href="/password">Change your password</a></p>
 <p><a href="{CHAT_PATH}/">Back to Perry</a></p>"""
     return pages.page("Profile", body, status_code=status_code)
+
+
+def _password_page(error: str = "", changed: bool = False, status_code: int = 200):
+    note = '<p class="saved" role="status">Your password is changed.</p>' if changed else ""
+    body = f"""<h1>Change your password</h1>
+<p>This logs you out on your other devices.</p>
+{pages.error_line(error)}{note}
+<form method="post" action="/password">
+  <label>Current password <input name="current_password" type="password" required
+         autocomplete="current-password"></label>
+  <label>New password (at least {users.MIN_PASSWORD_CHARS} characters)
+    <input name="new_password" type="password" autocomplete="new-password" required
+           minlength="{users.MIN_PASSWORD_CHARS}"></label>
+  <button type="submit">Change password</button>
+</form>
+<p><a href="/profile">Your Profile</a> · <a href="{CHAT_PATH}/">Back to Perry</a></p>"""
+    return pages.page("Change password", body, status_code=status_code)
 
 
 HTTPS_FLAG = "--https"

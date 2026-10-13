@@ -27,7 +27,14 @@ os.environ["PERRY_COLBERT_MODEL"] = ""
 os.environ["PERRY_SESSION_SECRET"] = "test-session-secret"
 
 from fakes import ScriptedChatModel, fake_embed, fake_provider
-from logins import OWNER_PASSWORD, OWNER_USERNAME, log_in
+from logins import (
+    OWNER_PASSWORD,
+    OWNER_USERNAME,
+    SAMS_PASSWORD,
+    create_invite,
+    log_in,
+    register,
+)
 
 
 @pytest.fixture
@@ -46,7 +53,7 @@ def database():
 
     db.init_schema()
     with db.pool().connection() as conn:
-        conn.execute("TRUNCATE documents, chunks, threads, users, invites, failed_logins RESTART IDENTITY CASCADE")
+        conn.execute("TRUNCATE documents, chunks, threads, users, invites, failed_logins, password_resets RESTART IDENTITY CASCADE")
         conn.execute("TRUNCATE datasets")
         tables = "SELECT tablename FROM pg_tables WHERE schemaname = 'analytics'"
         for row in conn.execute(tables).fetchall():
@@ -79,6 +86,25 @@ def client(owner):
 def owner_client(client):
     """A browser logged in as the Owner."""
     log_in(client, OWNER_USERNAME, OWNER_PASSWORD)
+    return client
+
+
+@pytest.fixture
+def owner_browser(owner):
+    """The Owner, logged in on a second browser beside `client`."""
+    from fastapi.testclient import TestClient
+
+    from perry import web
+
+    with TestClient(web.create_app()) as browser:
+        log_in(browser, OWNER_USERNAME, OWNER_PASSWORD)
+        yield browser
+
+
+@pytest.fixture
+def sam(client, owner_browser):
+    """Sam, a User who registered with an Invite and is logged in on `client`."""
+    register(client, create_invite(owner_browser), "sam", password=SAMS_PASSWORD)
     return client
 
 

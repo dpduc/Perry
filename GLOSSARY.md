@@ -15,12 +15,16 @@ The basic facts a User gives about themselves, such as name and time zone, which
 _Avoid_: Memory (that would be what Perry learns from conversation), settings
 
 **Owner**:
-The one User Perry belongs to. Only the Owner uploads Documents and Datasets, connects the Workspace, creates Invites, and has Turns that may involve the Task Agent.
+The one User Perry belongs to. Only the Owner uploads Documents and Datasets, connects the Workspace, creates Invites and Reset Codes, and has Turns that may involve the Task Agent.
 _Avoid_: Admin, superuser
 
 **Invite**:
 A single-use code from the Owner that lets one person register as a User. It expires after a week.
 _Avoid_: Invitation link, sign-up code, token
+
+**Reset Code**:
+A single-use code from the Owner that lets a User who forgot their password choose a new one. It expires after a day, and using it logs that User out everywhere else.
+_Avoid_: Reset token, reset link, recovery code
 
 ### Orchestration
 

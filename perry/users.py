@@ -33,6 +33,8 @@ SESSION_SECRET_VARIABLE = "PERRY_SESSION_SECRET"
 CREATE_OWNER_COMMAND = "uv run python -m perry.users create-owner"
 INVITE_DAYS = 7
 INVITE_LIFETIME = datetime.timedelta(days=INVITE_DAYS)
+RESET_CODE_HOURS = 24
+RESET_CODE_LIFETIME = datetime.timedelta(hours=RESET_CODE_HOURS)
 
 MAX_FAILED_LOGINS = 5
 FAILED_LOGIN_MINUTES = 15
@@ -40,6 +42,7 @@ FAILED_LOGIN_WINDOW = datetime.timedelta(minutes=FAILED_LOGIN_MINUTES)
 
 WRONG_LOGIN = "Wrong username or password."
 TOO_MANY_LOGINS = "Too many failed logins. Try again later."
+WRONG_CURRENT_PASSWORD = "That isn't your current password."
 NO_OWNER = f"Perry has no Owner yet. Create one first with: {CREATE_OWNER_COMMAND}"
 OWNER_EXISTS = "Perry already has an Owner; there can only be one."
 OWNER_CANT_BE_DISABLED = "The Owner can't be disabled."
@@ -48,6 +51,9 @@ INVITE_UNKNOWN = "That Invite code isn't right. Check it, or ask the Owner for a
 INVITE_USED = f"That Invite has already been used. {_ASK_FOR_ANOTHER}"
 INVITE_EXPIRED = f"That Invite has expired. {_ASK_FOR_ANOTHER}"
 INVITE_WITHDRAWN = f"That Invite was withdrawn by the Owner. {_ASK_FOR_ANOTHER}"
+RESET_CODE_UNKNOWN = "That Reset Code isn't right. Check it, or ask the Owner for a new one."
+RESET_CODE_USED = f"That Reset Code has already been used. {_ASK_FOR_ANOTHER}"
+RESET_CODE_EXPIRED = f"That Reset Code has expired. {_ASK_FOR_ANOTHER}"
 NO_SESSION_SECRET = (
     f"{SESSION_SECRET_VARIABLE} is not set. Add a long random value to .env, e.g. the "
     'output of: uv run python -c "import secrets; print(secrets.token_urlsafe(32))"'
@@ -103,8 +109,7 @@ def create_user(
 def _check_new_user(username: str, password: str, display_name: str, time_zone: str) -> None:
     if not username.strip():
         raise Refused("Choose a username.")
-    if len(password) < MIN_PASSWORD_CHARS:
-        raise Refused(f"The password must be at least {MIN_PASSWORD_CHARS} characters long.")
+    _check_new_password(password)
     if not display_name.strip():
         raise Refused("Give a display name.")
     _check_time_zone(time_zone)
@@ -319,6 +324,95 @@ def _check_invite(row: dict | None) -> None:
 
 def _invite(row: dict) -> Invite:
     return Invite(row["code"], row["created_at"], row["expires_at"])
+
+
+@dataclass(frozen=True)
+class ResetCode:
+    """A single-use code from the Owner that lets one User choose a new password."""
+
+    code: str
+    username: str
+    expires_at: datetime.datetime
+
+
+def create_reset_code(user_id: int) -> ResetCode:
+    """A new Reset Code for the User, valid for RESET_CODE_HOURS."""
+    created = _now()
+    with db.pool().connection() as conn:
+        conn.execute(
+            "INSERT INTO password_resets (code, user_id, created_at, expires_at) "
+            "VALUES (%s, %s, %s, %s)",
+            (secrets.token_urlsafe(9), user_id, created, created + RESET_CODE_LIFETIME),
+        )
+    return open_reset_codes()[-1]
+
+
+def open_reset_codes() -> list[ResetCode]:
+    """The Reset Codes that can still be used, soonest to expire first."""
+    with db.pool().connection() as conn:
+        rows = conn.execute(
+            "SELECT r.code, u.username, r.expires_at FROM password_resets r "
+            "JOIN users u ON u.id = r.user_id "
+            "WHERE r.used_at IS NULL AND r.expires_at > %s ORDER BY r.expires_at",
+            (_now(),),
+        ).fetchall()
+    return [ResetCode(row["code"], row["username"], row["expires_at"]) for row in rows]
+
+
+def reset_password(code: str, password: str) -> User:
+    """The User the Reset Code is for, with `password` as their new password. The code
+    is then used up, every session they had is ended, and their failed logins are
+    cleared (the Owner vouched for them). Refused, changing nothing, if the code is
+    wrong, used or expired, or the password is shorter than MIN_PASSWORD_CHARS."""
+    _check_new_password(password)
+    with db.pool().connection() as conn, conn.transaction():
+        reset = conn.execute(
+            "SELECT * FROM password_resets WHERE code = %s FOR UPDATE", (code.strip(),)
+        ).fetchone()
+        if reset is None:
+            raise Refused(RESET_CODE_UNKNOWN)
+        if reset["used_at"] is not None:
+            raise Refused(RESET_CODE_USED)
+        if reset["expires_at"] <= _now():
+            raise Refused(RESET_CODE_EXPIRED)
+        conn.execute(
+            "UPDATE password_resets SET used_at = %s WHERE code = %s", (_now(), reset["code"])
+        )
+        row = _set_password(conn, reset["user_id"], password)
+        conn.execute(
+            "DELETE FROM failed_logins WHERE username = lower(%s)", (row["username"],)
+        )
+    return _user(row)
+
+
+def change_password(user: User, current_password: str, new_password: str) -> None:
+    """Give `user` a new password, if `current_password` is their password now. Ends
+    every session they have, so start a new one for the browser they changed it in.
+    Refused if the current password is wrong or the new one is shorter than
+    MIN_PASSWORD_CHARS."""
+    with db.pool().connection() as conn:
+        row = conn.execute(
+            "SELECT password_hash FROM users WHERE id = %s", (user.id,)
+        ).fetchone()
+    if row is None or not _password_matches(row["password_hash"], current_password):
+        raise Refused(WRONG_CURRENT_PASSWORD)
+    _check_new_password(new_password)
+    with db.pool().connection() as conn:
+        _set_password(conn, user.id, new_password)
+
+
+def _check_new_password(password: str) -> None:
+    if len(password) < MIN_PASSWORD_CHARS:
+        raise Refused(f"The password must be at least {MIN_PASSWORD_CHARS} characters long.")
+
+
+def _set_password(conn, user_id: int, password: str) -> dict:
+    """Give the User a new password and end all their sessions; returns their row."""
+    return conn.execute(
+        "UPDATE users SET password_hash = %s, session_version = session_version + 1 "
+        "WHERE id = %s RETURNING *",
+        (_hasher.hash(password), user_id),
+    ).fetchone()
 
 
 def _now() -> datetime.datetime:

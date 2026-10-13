@@ -156,7 +156,10 @@ def _user_row(member: users.Member, owner: users.User) -> str:
     elif user.disabled:
         status, action = "disabled", _user_button(user, "enable", "Re-enable")
     else:
-        status, action = "active", _user_button(user, "disable", "Disable")
+        status = "active"
+        action = _user_button(user, "disable", "Disable") + _user_button(
+            user, "reset", "Reset Code"
+        )
     return f"""<tr data-user="{user.id}">
   <td>{html.escape(user.username)}</td>
   <td>{local_time(member.joined_at, owner)}</td>
@@ -183,3 +186,34 @@ def disable_user(user_id: int):
 def enable_user(user_id: int):
     users.enable(user_id)
     return back_to_panel()
+
+
+@router.post("/users/{user_id}/reset")
+def issue_reset_code(user_id: int):
+    users.create_reset_code(user_id)
+    return back_to_panel()
+
+
+# Reset Codes
+
+
+@section
+def reset_codes_section(owner: users.User) -> str:
+    rows = "\n".join(
+        f"""<tr data-reset="{html.escape(reset.code)}">
+  <td>{html.escape(reset.username)}</td>
+  <td><code>{html.escape(reset.code)}</code></td>
+  <td><a href="/reset?code={quote(reset.code)}">reset link</a></td>
+  <td>{local_time(reset.expires_at, owner)}</td></tr>"""
+        for reset in users.open_reset_codes()
+    )
+    table = (
+        f"<table><tr><th>User</th><th>Reset Code</th><th></th><th>Expires</th></tr>{rows}</table>"
+        if rows
+        else "<p>No unused Reset Codes.</p>"
+    )
+    return f"""<section><h2>Reset Codes</h2>
+<p>A Reset Code lets a User who forgot their password choose a new one, and logs them out
+everywhere. Give it to them yourself; it expires after {users.RESET_CODE_HOURS} hours.</p>
+{table}
+</section>"""

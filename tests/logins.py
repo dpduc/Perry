@@ -7,6 +7,7 @@ import gradio as gr
 
 OWNER_USERNAME = "owner"
 OWNER_PASSWORD = "owner-password-1"
+SAMS_PASSWORD = "sams-password-1"
 
 
 def log_in(client, username: str, password: str):
@@ -45,3 +46,14 @@ def register(client, invite: str, username: str, password: str = "new-password-1
         "time_zone": "Europe/Paris",
     } | fields
     return client.post("/register", data=form, follow_redirects=False)
+
+
+def is_logged_in(client) -> bool:
+    return client.get("/chat/", follow_redirects=False).status_code == 200
+
+
+def user_id_of(owner_client, username: str) -> str:
+    """The id of the User the Owner panel lists with this username."""
+    page = owner_client.get("/owner").text
+    (found,) = re.findall(rf'<tr data-user="(\d+)">\s*<td>{re.escape(username)}</td>', page)
+    return found

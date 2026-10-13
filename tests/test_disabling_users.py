@@ -5,16 +5,19 @@ import datetime
 import re
 import zoneinfo
 
-import pytest
 from fakes import with_usage
-from logins import OWNER_PASSWORD, OWNER_USERNAME, create_invite, log_in, register
+from logins import (
+    OWNER_PASSWORD,
+    OWNER_USERNAME,
+    SAMS_PASSWORD,
+    create_invite,
+    is_logged_in,
+    log_in,
+    register,
+    user_id_of,
+)
 
-SAMS_PASSWORD = "sams-password-1"
 TRY_AGAIN_LATER = "Too many failed logins. Try again later."
-
-
-def is_logged_in(client) -> bool:
-    return client.get("/chat/", follow_redirects=False).status_code == 200
 
 
 def minutes_from_now(monkeypatch, minutes: int) -> None:
@@ -79,25 +82,6 @@ def test_failed_logins_for_unknown_usernames_are_limited_too(client):
 # The Users list
 
 
-@pytest.fixture
-def owner_browser(owner):
-    """The Owner, logged in on a second browser beside `client`."""
-    from fastapi.testclient import TestClient
-
-    from perry import web
-
-    with TestClient(web.create_app()) as browser:
-        log_in(browser, OWNER_USERNAME, OWNER_PASSWORD)
-        yield browser
-
-
-@pytest.fixture
-def sam(client, owner_browser):
-    """Sam, a User who registered with an Invite and is logged in on `client`."""
-    register(client, create_invite(owner_browser), "sam", password=SAMS_PASSWORD)
-    return client
-
-
 def users_listed(owner_client) -> list[dict]:
     """The rows of the Owner panel's Users table: username, joined, last login, status."""
     page = owner_client.get("/owner").text
@@ -109,12 +93,6 @@ def users_listed(owner_client) -> list[dict]:
 def cells(row: str) -> list[str]:
     found = re.findall(r"<td>(.*?)</td>", row, flags=re.DOTALL)
     return [re.sub(r"<[^>]+>", "", cell).strip() for cell in found]
-
-
-def user_id_of(owner_client, username: str) -> str:
-    page = owner_client.get("/owner").text
-    (found,) = re.findall(rf'<tr data-user="(\d+)">\s*<td>{re.escape(username)}</td>', page)
-    return found
 
 
 def owners_today() -> str:

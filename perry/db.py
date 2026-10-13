@@ -125,6 +125,16 @@ CREATE TABLE IF NOT EXISTS failed_logins (
 );
 CREATE INDEX IF NOT EXISTS failed_logins_idx ON failed_logins (username, failed_at);
 
+-- Reset Codes (perry.users): single-use codes from the Owner that let one User who forgot
+-- their password choose a new one.
+CREATE TABLE IF NOT EXISTS password_resets (
+    code       text PRIMARY KEY,
+    user_id    bigint NOT NULL REFERENCES users(id),
+    created_at timestamptz NOT NULL,
+    expires_at timestamptz NOT NULL,
+    used_at    timestamptz
+);
+
 -- Datasets are real tables in the analytics schema; this is their registry.
 CREATE SCHEMA IF NOT EXISTS analytics;
 CREATE TABLE IF NOT EXISTS datasets (
