@@ -72,7 +72,7 @@ Your data lives in the Postgres from `compose.yaml`, in the Docker volume `pgdat
 
 ### The UI
 
-Perry asks you to log in first, even when it runs on your own machine; a login lasts 14 days in that browser. *Log out* is at the top of the sidebar.
+Perry asks you to log in first, even when it runs on your own machine; a login lasts 14 days in that browser. *Log out* is at the top of the sidebar. *Profile* there lets you change your display name, time zone and an optional about-me line; Perry reads them on every Turn, and works out "today" or "this week" in your time zone.
 
 To let someone else in, open the **Owner panel** (the link next to your name in the sidebar, or `/owner`) and click *Create an Invite*. Send them the Invite's register link. Each Invite works once and expires after 7 days, and you can withdraw an unused one. On the register page they choose a username, a password (at least 10 characters), a display name and a time zone, and are logged in straight away.
 
