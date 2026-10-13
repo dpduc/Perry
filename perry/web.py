@@ -100,6 +100,9 @@ def create_app(blocks: gr.Blocks | None = None, *, secure_cookies: bool = False)
         served,
         blocks if blocks is not None else chat_ui.build(),
         path=CHAT_PATH,
+        # Behind ngrok (which sends X-Forwarded-Host), Gradio would otherwise drop /chat
+        # from the links it builds, e.g. to a Chart in an answer.
+        root_path=CHAT_PATH,
         auth_dependency=_gradio_user,
         allowed_paths=[str(charts.directory())],
         footer_links=[],
@@ -175,7 +178,14 @@ def _profile_page(
     return HTMLResponse(PAGE.format(title="Profile · Perry", body=body), status_code=status_code)
 
 
-def main() -> None:
+HTTPS_FLAG = "--https"
+
+
+def main(argv: list[str] | None = None) -> None:
+    """Serve Perry on HOST:PORT. With --https (as scripts/serve.py runs it, behind ngrok's
+    HTTPS endpoint), the session cookie is marked Secure."""
+    import sys
+
     import uvicorn
 
     from perry import db, ingest, privacy, summaries
@@ -184,9 +194,13 @@ def main() -> None:
     notice = privacy.startup() or ""
     if notice:
         print(notice)
+    argv = sys.argv[1:] if argv is None else argv
+    unknown = [arg for arg in argv if arg != HTTPS_FLAG]
+    if unknown:
+        raise SystemExit(f"Usage: uv run python -m perry.web [{HTTPS_FLAG}]")
     db.init_schema()
     try:
-        served = create_app(chat_ui.build(notice))
+        served = create_app(chat_ui.build(notice), secure_cookies=HTTPS_FLAG in argv)
     except users.Refused as refused:
         raise SystemExit(str(refused)) from None
     # e.g. a changed embedding model, Documents stored before ColBERT, or after a crash.

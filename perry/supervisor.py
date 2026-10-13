@@ -45,15 +45,13 @@ _PROFILE = "perry_profile"
 # Each step is one Supervisor decision (call an Agent, or answer).
 MAX_STEPS_PER_TURN = 6
 
-SYSTEM_PROMPT = """You are Perry, a personal assistant. You coordinate specialist Agents \
+_PROMPT = """You are Perry, a personal assistant. You coordinate specialist Agents \
 and answer the user.
 
 Agents available as tools:
 - ask_knowledge_agent: anything that could be answered from the user's own Documents \
 (notes, reports, PDFs they uploaded).
-- ask_task_agent: the user's calendar and email: what's on, what someone wrote, and \
-sending, replying, scheduling, moving or deleting (the user confirms each of those).
-- ask_analysis_agent: questions about the user's Datasets (CSV or spreadsheet data), \
+{task_agent}- ask_analysis_agent: questions about the user's Datasets (CSV or spreadsheet data), \
 such as totals, averages, counts or comparisons.
 
 Rules:
@@ -66,10 +64,23 @@ rather than answering from general knowledge.
 - Keep chart markers like [chart: <id>.png] exactly as given; they show as images.
 - If a step comes back FAILED, give the results of the steps that worked, then say which \
 step failed. Never guess what a failed step would have returned.
-- To act on a request that needs other information first (e.g. email a summary of some \
-notes), get that information, then give the Task Agent the complete content to send.
+{task_agent_rules}"""
+
+# Email and calendar are the Owner's (ADR-0004): only the Owner's Supervisor has the Task Agent.
+_TASK_AGENT = """- ask_task_agent: the user's calendar and email: what's on, what someone wrote, \
+and sending, replying, scheduling, moving or deleting (the user confirms each of those).
+"""
+_TASK_AGENT_RULES = """- To act on a request that needs other information first (e.g. email a \
+summary of some notes), get that information, then give the Task Agent the complete content \
+to send.
 - If the user rejected a Write Action with a note, ask the Task Agent again with a \
 request revised to follow the note."""
+_NOT_THE_OWNER = """- Email and calendar aren't available to this user: they belong to Perry's \
+Owner. If asked about email, calendar or meetings, say that email and calendar aren't \
+available to them."""
+
+SYSTEM_PROMPT = _PROMPT.format(task_agent=_TASK_AGENT, task_agent_rules=_TASK_AGENT_RULES)
+NON_OWNER_PROMPT = _PROMPT.format(task_agent="", task_agent_rules=_NOT_THE_OWNER)
 
 
 @tool(response_format="content_and_artifact")
@@ -135,20 +146,23 @@ def _checkpointer() -> PostgresSaver:
     return checkpointer
 
 
-def supervisor():
+def supervisor(user: User | None = None):
+    """The Supervisor for `user`'s Turns: only the Owner's has the Task Agent. With no
+    `user` it is the Owner's, for reading a Thread's state (which the tools don't change)."""
+    owner = user is None or user.is_owner
     # Built per call (cheap) so it always uses the current model provider.
     return create_agent(
         models.chat_model(),
         tools=[
             ask_knowledge_agent,
-            ask_task_agent,
+            *([ask_task_agent] if owner else []),
             ask_analysis_agent,
         ],
         middleware=[
             retries.RetryFailedSteps(),
             GiveProfile(),
         ],
-        system_prompt=SYSTEM_PROMPT,
+        system_prompt=SYSTEM_PROMPT if owner else NON_OWNER_PROMPT,
         checkpointer=_checkpointer(),
         name="supervisor",
     )
@@ -282,7 +296,7 @@ def run_turn(
     per-request override) names the Retrieval Technique the Knowledge Agent must use
     if the Supervisor asks it; by default the Knowledge Agent picks."""
     config = _config(thread_id)
-    graph = supervisor()
+    graph = supervisor(user)
     cancelled = _cancel_pending(graph, config)
     if refused := usage.daily_cap_refusal():
         outcome = refused
@@ -299,7 +313,7 @@ def run_turn(
 def resume_turn(user: User, thread_id: str, decision: Decision) -> TurnResult:
     """Continue the Turn waiting on a Confirmation with `user`'s decision.
     Returns the answer, or the next Confirmation."""
-    graph = supervisor()
+    graph = supervisor(user)
     before = graph.get_state(_config(thread_id))
     if not before.interrupts:
         return NOTHING_PENDING
