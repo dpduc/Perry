@@ -66,7 +66,7 @@ def install(app: FastAPI) -> None:
     """Serve the Owner panel on `app`."""
     app.include_router(router)
     app.add_exception_handler(
-        _NotLoggedIn, lambda request, exc: RedirectResponse("/login", status_code=303)
+        _NotLoggedIn, lambda request, exc: RedirectResponse(pages.LOGIN_PATH, status_code=303)
     )
     app.add_exception_handler(
         _NotOwner,
@@ -86,7 +86,7 @@ def back_to_panel(error: str = "") -> RedirectResponse:
 def panel(owner: Annotated[users.User, Depends(owner_only)], error: str = ""):
     sections = "\n".join(render(owner) for render in SECTIONS)
     body = f"""<h1>Owner panel</h1>
-<p><a href="/chat/">Back to Perry</a></p>
+<p><a href="{pages.CHAT_PATH}/">Back to Perry</a></p>
 {pages.error_line(error)}
 {sections}"""
     return pages.page("Owner panel", body, wide=True)

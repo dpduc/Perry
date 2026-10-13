@@ -11,6 +11,7 @@ from logins import (
     create_invite,
     invites_listed,
     log_in,
+    log_out,
     register,
 )
 
@@ -23,7 +24,7 @@ def invite(owner_client):
     """An Invite the Owner created, with the browser then logged out, ready for the
     invitee to register on it."""
     code = create_invite(owner_client)
-    owner_client.get("/logout")
+    log_out(owner_client)
     return code
 
 
@@ -83,13 +84,13 @@ def test_other_users_cant_reach_the_owner_panel(client, invite):
     assert client.get("/owner").status_code == 403
     assert client.post("/owner/invites").status_code == 403
     assert "Only the Owner" in client.get("/owner").text
-    client.get("/logout")
+    log_out(client)
     assert invites_listed(as_owner(client)) == []  # Sam's attempt created no Invite
 
 
 def test_only_the_owner_is_offered_the_owner_panel_in_the_chat_ui(client, invite):
     assert "/owner" in shown_as_logged_in(as_owner(client))
-    client.get("/logout")
+    log_out(client)
 
     register(client, invite, "sam")
 
@@ -110,31 +111,31 @@ def test_an_invited_person_registers_and_is_logged_in_straight_away(client, invi
 
 def test_a_registered_user_logs_in_again_later(client, invite):
     register(client, invite, "Sam", password="sams-password")
-    client.get("/logout")
+    log_out(client)
 
     log_in(client, "sam", "sams-password")
 
     assert "New User" in shown_as_logged_in(client)
 
 
-def test_the_register_page_has_the_gemini_notice_and_prefills_the_time_zone(client):
+def test_the_register_page_says_where_messages_go_and_prefills_the_time_zone(client):
     page = client.get("/register").text
 
-    assert "Google Gemini" in page
+    assert "Google Gemini" in page and "OpenAI" in page  # the paid fallback too
     assert "may be logged" in page
     assert "resolvedOptions().timeZone" in page
 
 
 def test_the_owners_register_link_fills_in_the_invite(owner_client):
     code = create_invite(owner_client)
-    owner_client.get("/logout")
+    log_out(owner_client)
 
     assert f'value="{code}"' in owner_client.get(f"/register?invite={code}").text
 
 
 def test_an_invite_works_only_once(client, invite):
     register(client, invite, "sam")
-    client.get("/logout")
+    log_out(client)
 
     response = register(client, invite, "alex")
 
@@ -178,7 +179,7 @@ def test_an_invite_still_works_on_day_6(client, invite, monkeypatch):
 
 def test_a_withdrawn_invite_is_refused(client, invite):
     as_owner(client).post(f"/owner/invites/{invite}/withdraw")
-    client.get("/logout")
+    log_out(client)
 
     response = register(client, invite, "sam")
 

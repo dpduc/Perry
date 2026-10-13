@@ -9,6 +9,9 @@ from fastapi.responses import HTMLResponse
 from perry import users
 
 SESSION_COOKIE = "perry_session"
+CHAT_PATH = "/chat"
+LOGIN_PATH = "/login"
+LOGOUT_PATH = "/logout"  # POST only
 
 PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">

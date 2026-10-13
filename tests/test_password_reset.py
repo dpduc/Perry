@@ -11,6 +11,7 @@ from logins import (
     SAMS_PASSWORD,
     is_logged_in,
     log_in,
+    log_out,
     user_id_of,
 )
 
@@ -46,13 +47,13 @@ def reset(client, code: str, password: str = NEW_PASSWORD):
 
 def test_a_user_resets_their_password_with_a_reset_code_from_the_owner(sam, owner_browser):
     code = issue_reset_code(owner_browser, "sam")
-    sam.get("/logout")
+    log_out(sam)
 
     response = reset(sam, code)
 
     assert response.status_code == 303
     assert is_logged_in(sam)
-    sam.get("/logout")
+    log_out(sam)
     assert "Wrong username or password." in log_in(sam, "sam", SAMS_PASSWORD).text
     log_in(sam, "sam", NEW_PASSWORD)
     assert is_logged_in(sam)
@@ -61,7 +62,7 @@ def test_a_user_resets_their_password_with_a_reset_code_from_the_owner(sam, owne
 def test_a_reset_code_works_once(sam, owner_browser):
     code = issue_reset_code(owner_browser, "sam")
     reset(sam, code)
-    sam.get("/logout")
+    log_out(sam)
 
     response = reset(sam, code, "yet-another-password-1")
 
@@ -79,7 +80,7 @@ def test_a_reset_code_expires_after_a_day(sam, owner_browser, monkeypatch):
 
     assert response.status_code == 400
     assert "That Reset Code has expired." in response.text
-    sam.get("/logout")
+    log_out(sam)
     assert "Wrong username or password." in log_in(sam, "sam", NEW_PASSWORD).text
     assert "sam" not in reset_codes_listed(owner_browser)
 
@@ -93,7 +94,7 @@ def test_a_wrong_reset_code_is_refused(sam):
 
 def test_the_new_password_must_be_at_least_10_characters(sam, owner_browser):
     code = issue_reset_code(owner_browser, "sam")
-    sam.get("/logout")
+    log_out(sam)
 
     response = reset(sam, code, "short")
 
@@ -119,13 +120,13 @@ def test_a_reset_ends_the_users_other_sessions(sam, owner_browser):
 
 
 def test_a_reset_clears_the_failed_logins_for_that_username(sam, owner_browser):
-    sam.get("/logout")
+    log_out(sam)
     for _ in range(5):
         log_in(sam, "sam", "not-the-password")
     assert log_in(sam, "sam", SAMS_PASSWORD).status_code == 429
 
     reset(sam, issue_reset_code(owner_browser, "sam"))
-    sam.get("/logout")
+    log_out(sam)
     log_in(sam, "sam", NEW_PASSWORD)
 
     assert is_logged_in(sam)
@@ -159,7 +160,7 @@ def test_a_logged_in_user_changes_their_password_by_entering_the_current_one(sam
     assert response.status_code == 200
     assert "Your password is changed." in response.text
     assert is_logged_in(sam)  # this session carries on
-    sam.get("/logout")
+    log_out(sam)
     assert "Wrong username or password." in log_in(sam, "sam", SAMS_PASSWORD).text
     log_in(sam, "sam", NEW_PASSWORD)
     assert is_logged_in(sam)
@@ -170,7 +171,7 @@ def test_changing_the_password_needs_the_right_current_one(sam):
 
     assert response.status_code == 400
     assert "That isn't your current password." in response.text
-    sam.get("/logout")
+    log_out(sam)
     log_in(sam, "sam", SAMS_PASSWORD)
     assert is_logged_in(sam)
 
@@ -180,7 +181,7 @@ def test_a_changed_password_must_be_at_least_10_characters(sam):
 
     assert response.status_code == 400
     assert "at least 10 characters" in response.text
-    sam.get("/logout")
+    log_out(sam)
     log_in(sam, "sam", SAMS_PASSWORD)
     assert is_logged_in(sam)
 

@@ -446,6 +446,18 @@ def user_for_session(token: str | None) -> User | None:
     return _user(row)
 
 
+def end_sessions(user: User) -> None:
+    """Log `user` out everywhere: every session token they have stops working."""
+    with db.pool().connection() as conn:
+        _end_sessions(conn, user.id)
+
+
+def _end_sessions(conn, user_id: int) -> None:
+    conn.execute(
+        "UPDATE users SET session_version = session_version + 1 WHERE id = %s", (user_id,)
+    )
+
+
 def session_secret() -> str:
     """The secret sessions are signed with; refused if it isn't configured."""
     secret = os.getenv(SESSION_SECRET_VARIABLE, "").strip()

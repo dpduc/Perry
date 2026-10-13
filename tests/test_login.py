@@ -1,7 +1,8 @@
 """Logging in and out of the served app: nothing in Perry is reachable without a session."""
 
 import pytest
-from logins import OWNER_PASSWORD, OWNER_USERNAME, log_in
+from fastapi.testclient import TestClient
+from logins import OWNER_PASSWORD, OWNER_USERNAME, log_in, log_out
 
 # The Gradio API, as the browser's chat page calls it.
 QUEUE_JOIN = "/chat/gradio_api/queue/join"
@@ -59,11 +60,28 @@ def test_the_session_lasts_across_requests(owner_client):
 
 
 def test_logging_out_ends_the_session(owner_client):
-    response = owner_client.get("/logout", follow_redirects=False)
+    response = log_out(owner_client)
 
     assert response.headers["location"] == "/login"
     assert not is_logged_in(owner_client)
     assert owner_client.get("/chat/config").status_code == 401
+
+
+def test_logging_out_is_only_a_post(owner_client):
+    """A link or an <img> elsewhere can't log you out."""
+    assert owner_client.get("/logout").status_code == 405
+    assert is_logged_in(owner_client)
+
+
+def test_a_copied_session_cookie_stops_working_after_logging_out(owner_client):
+    from perry import web
+
+    copied = owner_client.cookies.get("perry_session")
+    log_out(owner_client)
+
+    with TestClient(web.create_app()) as elsewhere:
+        elsewhere.cookies.set("perry_session", copied)
+        assert not is_logged_in(elsewhere)
 
 
 def test_the_session_cookie_is_http_only_and_lasts_14_days(client):

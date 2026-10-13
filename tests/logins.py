@@ -17,6 +17,11 @@ def log_in(client, username: str, password: str):
     )
 
 
+def log_out(client):
+    """Click the sidebar's Log out button; returns the response (a redirect to log in)."""
+    return client.post("/logout", follow_redirects=False)
+
+
 def request_as(user) -> gr.Request:
     """The request Gradio hands a handler when `user` is logged in."""
     return gr.Request(username=str(user.id))

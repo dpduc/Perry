@@ -13,6 +13,7 @@ from logins import (
     create_invite,
     is_logged_in,
     log_in,
+    log_out,
     register,
     user_id_of,
 )
@@ -112,7 +113,7 @@ def test_the_owner_panel_lists_users_with_when_they_joined_and_last_logged_in(
 
 
 def test_the_users_list_shows_a_later_login(sam, owner_browser):
-    sam.get("/logout")
+    log_out(sam)
     log_in(sam, "sam", SAMS_PASSWORD)
 
     listed = {row["username"]: row for row in users_listed(owner_browser)}
@@ -157,7 +158,7 @@ def test_disabling_a_user_ends_their_open_session_at_once(sam, owner_browser):
 
 def test_a_disabled_user_cant_log_in(sam, owner_browser):
     disable(owner_browser, "sam")
-    sam.get("/logout")
+    log_out(sam)
 
     response = log_in(sam, "sam", SAMS_PASSWORD)
 

@@ -2,22 +2,23 @@
 behind them at /chat. Run with: uv run python -m perry.web
 
 Every request under /chat, page or Gradio API, needs a session: pages without one are
-sent to the login page, API calls are refused. Handlers learn the User from Gradio's
+sent to the login page, API calls are refused. Any state-changing request (not a GET)
+from another site is refused (see `_from_this_site`). Handlers learn the User from Gradio's
 request (see `perry.app.user_of`), never from anything the browser holds.
 """
 
 import html
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 import gradio as gr
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from perry import app as chat_ui
-from perry import charts, owner_panel, pages, users
-from perry.pages import PAGE, SESSION_COOKIE
+from perry import charts, models, owner_panel, pages, users
+from perry.pages import CHAT_PATH, LOGIN_PATH, LOGOUT_PATH, SESSION_COOKIE
 
-CHAT_PATH = "/chat"
 HOST = "127.0.0.1"
 PORT = 7860
 
@@ -34,23 +35,31 @@ def create_app(blocks: gr.Blocks | None = None, *, secure_cookies: bool = False)
     @served.middleware("http")
     async def require_session(request: Request, call_next):
         path = request.url.path
-        if (path == CHAT_PATH or path.startswith(CHAT_PATH + "/")) and _user(request) is None:
+        in_chat = path == CHAT_PATH or path.startswith(CHAT_PATH + "/")
+        if in_chat and pages.current_user(request) is None:
             if path.rstrip("/") == CHAT_PATH:
-                return RedirectResponse("/login", status_code=303)
+                return RedirectResponse(LOGIN_PATH, status_code=303)
             return JSONResponse({"error": "Not logged in"}, status_code=401)
+        return await call_next(request)
+
+    @served.middleware("http")
+    async def refuse_cross_site(request: Request, call_next):
+        if request.method not in SAFE_METHODS and not _from_this_site(request):
+            return pages.page("Refused", pages.error_line(CROSS_SITE), status_code=403)
         return await call_next(request)
 
     @served.get("/")
     def home(request: Request):
-        return RedirectResponse(f"{CHAT_PATH}/" if _user(request) else "/login", status_code=303)
+        into = f"{CHAT_PATH}/" if pages.current_user(request) else LOGIN_PATH
+        return RedirectResponse(into, status_code=303)
 
-    @served.get("/login", response_class=HTMLResponse)
+    @served.get(LOGIN_PATH, response_class=HTMLResponse)
     def login_page(request: Request):
-        if _user(request) is not None:
+        if pages.current_user(request) is not None:
             return RedirectResponse(f"{CHAT_PATH}/", status_code=303)
         return _login_page()
 
-    @served.post("/login")
+    @served.post(LOGIN_PATH)
     def log_in(username: str = Form(""), password: str = Form("")):
         try:
             user = users.authenticate(username, password)
@@ -107,9 +116,14 @@ def create_app(blocks: gr.Blocks | None = None, *, secure_cookies: bool = False)
             return _reset_page(code, str(refused), status_code=400)
         return logged_in(user)
 
-    @served.api_route("/logout", methods=["GET", "POST"])
-    def log_out():
-        response = RedirectResponse("/login", status_code=303)
+    @served.post(LOGOUT_PATH)
+    def log_out(request: Request):
+        # Ends the session server-side too (on every browser), so a copied cookie stops
+        # working.
+        user = pages.current_user(request)
+        if user is not None:
+            users.end_sessions(user)
+        response = RedirectResponse(LOGIN_PATH, status_code=303)
         response.delete_cookie(SESSION_COOKIE, httponly=True, secure=secure_cookies, samesite="lax")
         return response
 
@@ -117,17 +131,17 @@ def create_app(blocks: gr.Blocks | None = None, *, secure_cookies: bool = False)
 
     @served.get("/password", response_class=HTMLResponse)
     def password_page(request: Request):
-        if _user(request) is None:
-            return RedirectResponse("/login", status_code=303)
+        if pages.current_user(request) is None:
+            return RedirectResponse(LOGIN_PATH, status_code=303)
         return _password_page()
 
     @served.post("/password", response_class=HTMLResponse)
     def change_password(
         request: Request, current_password: str = Form(""), new_password: str = Form("")
     ):
-        user = _user(request)
+        user = pages.current_user(request)
         if user is None:
-            return RedirectResponse("/login", status_code=303)
+            return RedirectResponse(LOGIN_PATH, status_code=303)
         try:
             users.change_password(user, current_password, new_password)
         except users.Refused as refused:
@@ -137,9 +151,9 @@ def create_app(blocks: gr.Blocks | None = None, *, secure_cookies: bool = False)
 
     @served.get("/profile", response_class=HTMLResponse)
     def profile_page(request: Request):
-        user = _user(request)
+        user = pages.current_user(request)
         if user is None:
-            return RedirectResponse("/login", status_code=303)
+            return RedirectResponse(LOGIN_PATH, status_code=303)
         return _profile_page(user.profile)
 
     @served.post("/profile", response_class=HTMLResponse)
@@ -149,9 +163,9 @@ def create_app(blocks: gr.Blocks | None = None, *, secure_cookies: bool = False)
         time_zone: str = Form(""),
         about: str = Form(""),
     ):
-        user = _user(request)
+        user = pages.current_user(request)
         if user is None:
-            return RedirectResponse("/login", status_code=303)
+            return RedirectResponse(LOGIN_PATH, status_code=303)
         try:
             saved = users.update_profile(user, display_name, time_zone, about)
         except users.Refused as refused:
@@ -172,21 +186,35 @@ def create_app(blocks: gr.Blocks | None = None, *, secure_cookies: bool = False)
     )
 
 
-def _user(request: Request) -> users.User | None:
-    return pages.current_user(request)
+SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+CROSS_SITE = "Refused: that request came from another site."
+
+
+def _from_this_site(request: Request) -> bool:
+    """Whether a request's Origin (or, without one, its Referer) is this site, i.e. the
+    host the browser addressed (ngrok passes the public Host on). X-Forwarded-Host
+    isn't trusted for this.
+
+    A request with neither header is let through: browsers send Origin with every
+    cross-site POST (and SameSite=Lax keeps the cookie off most of them anyway), so only
+    non-browser clients, which hold no victim's cookie, send neither."""
+    source = request.headers.get("origin") or request.headers.get("referer")
+    if source is None:
+        return True
+    source_host = urlsplit(source).netloc.lower()
+    return bool(source_host) and source_host == request.headers.get("host", "").lower()
 
 
 def _gradio_user(request: Request) -> str | None:
     """What Gradio knows the User by (its request's `username`): the User's id."""
-    user = _user(request)
+    user = pages.current_user(request)
     return str(user.id) if user else None
 
 
 def _login_page(error: str = "", username: str = "", status_code: int = 200) -> HTMLResponse:
-    shown_error = f'<p class="error" role="alert">{html.escape(error)}</p>' if error else ""
     body = f"""<h1>Log in to Perry</h1>
-{shown_error}
-<form method="post" action="/login">
+{pages.error_line(error)}
+<form method="post" action="{LOGIN_PATH}">
   <label>Username <input name="username" autocomplete="username" required autofocus
          value="{html.escape(username)}"></label>
   <label>Password <input name="password" type="password" autocomplete="current-password"
@@ -196,7 +224,7 @@ def _login_page(error: str = "", username: str = "", status_code: int = 200) -> 
 <p class="notice">Have an Invite? <a href="/register">Register</a></p>
 <p class="notice">Forgot your password? Ask the Owner for a Reset Code, then
   <a href="/reset">reset it</a>.</p>"""
-    return HTMLResponse(PAGE.format(title="Log in · Perry", body=body), status_code=status_code)
+    return pages.page("Log in", body, status_code=status_code)
 
 
 @dataclass(frozen=True)
@@ -209,9 +237,7 @@ class RegisterForm:
     time_zone: str = ""
 
 
-REGISTER_NOTICE = (
-    "Perry answers with Google Gemini: your messages are sent to Google and may be logged."
-)
+REGISTER_NOTICE = models.CHAT_DATA_NOTICE
 
 
 def _register_page(form: RegisterForm, error: str = "", status_code: int = 200) -> HTMLResponse:
@@ -235,7 +261,7 @@ def _register_page(form: RegisterForm, error: str = "", status_code: int = 200) 
   <p class="notice">{html.escape(REGISTER_NOTICE)}</p>
   <button type="submit">Register</button>
 </form>
-<p class="notice">Already registered? <a href="/login">Log in</a></p>
+<p class="notice">Already registered? <a href="{LOGIN_PATH}">Log in</a></p>
 <script>
   // Pre-fill the time zone from the browser.
   const zone = document.getElementById("time_zone");
@@ -256,17 +282,14 @@ def _reset_page(code: str = "", error: str = "", status_code: int = 200) -> HTML
            minlength="{users.MIN_PASSWORD_CHARS}"></label>
   <button type="submit">Reset password</button>
 </form>
-<p class="notice"><a href="/login">Back to log in</a></p>"""
+<p class="notice"><a href="{LOGIN_PATH}">Back to log in</a></p>"""
     return pages.page("Reset password", body, status_code=status_code)
 
 
 def _profile_page(
     profile: users.Profile, error: str = "", saved: bool = False, status_code: int = 200
 ) -> HTMLResponse:
-    if error:
-        note = f'<p class="error" role="alert">{html.escape(error)}</p>'
-    else:
-        note = '<p class="saved" role="status">Saved.</p>' if saved else ""
+    note = pages.error_line(error) or ('<p class="saved" role="status">Saved.</p>' if saved else "")
     body = f"""<h1>Your Profile</h1>
 <p>Perry reads this when answering you.</p>
 {note}

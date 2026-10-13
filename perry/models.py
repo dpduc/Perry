@@ -62,6 +62,11 @@ def is_transient(error: BaseException) -> bool:
 # quota is used up or it stays overloaded (see `_FreeFirst`). Without OPENAI_API_KEY there
 # is no fallback.
 LLM_MODEL = os.getenv("PERRY_LLM_MODEL", "gemini-3.8-flash")
+# What a person registering is told about where their messages go.
+CHAT_DATA_NOTICE = (
+    "Perry answers with Google Gemini or, as a fallback, OpenAI: your messages are sent "
+    "to Google or OpenAI and may be logged."
+)
 FALLBACK_LLM_MODEL = os.getenv("PERRY_FALLBACK_LLM_MODEL", "gpt-5.4-mini")
 # The benchmark grid runs every Turn on one paid model, never mixing in the free one.
 BENCHMARK_LLM_MODEL = os.getenv("PERRY_BENCHMARK_LLM_MODEL", "gpt-5.4-nano")

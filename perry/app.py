@@ -14,6 +14,7 @@ from perry import (
     google_auth,
     ingest,
     models,
+    pages,
     privacy,
     summaries,
     techniques,
@@ -34,6 +35,15 @@ from perry.supervisor import (
 )
 
 EMPTY = {"text": "", "files": []}
+
+# Logging out is a POST (so a link elsewhere can't log you out): submit a form for it.
+LOG_OUT_JS = f"""() => {{
+  const form = document.createElement("form");
+  form.method = "post";
+  form.action = "{pages.LOGOUT_PATH}";
+  document.body.appendChild(form);
+  form.submit();
+}}"""
 
 LOG_IN_AGAIN = "You're not logged in. Reload the page to log in again."
 
@@ -404,7 +414,7 @@ def build(privacy_notice: str = "") -> gr.Blocks:
             gr.Markdown("## Perry")
             who = gr.Markdown()
             gr.Button("Profile", link="/profile", size="sm")
-            gr.Button("Log out", link="/logout", size="sm")
+            gr.Button("Log out", size="sm").click(None, js=LOG_OUT_JS)
             new_button = gr.Button("New thread", variant="primary")
             # Filled on page load with the User's own Threads.
             thread_picker = gr.Dropdown(choices=[], label="Threads", value=None)
