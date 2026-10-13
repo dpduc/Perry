@@ -46,7 +46,7 @@ def database():
 
     db.init_schema()
     with db.pool().connection() as conn:
-        conn.execute("TRUNCATE documents, chunks, threads, users RESTART IDENTITY CASCADE")
+        conn.execute("TRUNCATE documents, chunks, threads, users, invites RESTART IDENTITY CASCADE")
         conn.execute("TRUNCATE datasets")
         tables = "SELECT tablename FROM pg_tables WHERE schemaname = 'analytics'"
         for row in conn.execute(tables).fetchall():
