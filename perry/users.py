@@ -7,6 +7,11 @@ session version; bumping the version ends all of that User's sessions.
 Create the Owner once with:
 
     uv run python -m perry.users create-owner
+
+A User who is locked out (e.g. the Owner, who has no one to ask for a Reset Code) can
+be given a new password on this machine with:
+
+    uv run python -m perry.users reset-password <username>
 """
 
 import datetime
@@ -21,7 +26,7 @@ from dataclasses import dataclass
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
 from itsdangerous import BadSignature, URLSafeTimedSerializer
-from psycopg import errors
+from psycopg import errors, sql
 
 from perry import db
 
@@ -31,6 +36,7 @@ SESSION_DAYS = 14
 SESSION_SECONDS = SESSION_DAYS * 24 * 60 * 60
 SESSION_SECRET_VARIABLE = "PERRY_SESSION_SECRET"
 CREATE_OWNER_COMMAND = "uv run python -m perry.users create-owner"
+RESET_PASSWORD_COMMAND = "uv run python -m perry.users reset-password <username>"
 INVITE_DAYS = 7
 INVITE_LIFETIME = datetime.timedelta(days=INVITE_DAYS)
 RESET_CODE_HOURS = 24
@@ -54,6 +60,10 @@ INVITE_WITHDRAWN = f"That Invite was withdrawn by the Owner. {_ASK_FOR_ANOTHER}"
 RESET_CODE_UNKNOWN = "That Reset Code isn't right. Check it, or ask the Owner for a new one."
 RESET_CODE_USED = f"That Reset Code has already been used. {_ASK_FOR_ANOTHER}"
 RESET_CODE_EXPIRED = f"That Reset Code has expired. {_ASK_FOR_ANOTHER}"
+RESET_CODE_USER_DISABLED = (
+    "Your account is disabled, so its password can't be reset. Ask the Owner."
+)
+NO_RESET_CODE_FOR_DISABLED = "That User is disabled. Re-enable them before giving a Reset Code."
 NO_SESSION_SECRET = (
     f"{SESSION_SECRET_VARIABLE} is not set. Add a long random value to .env, e.g. the "
     'output of: uv run python -c "import secrets; print(secrets.token_urlsafe(32))"'
@@ -110,8 +120,7 @@ def _check_new_user(username: str, password: str, display_name: str, time_zone: 
     if not username.strip():
         raise Refused("Choose a username.")
     _check_new_password(password)
-    if not display_name.strip():
-        raise Refused("Give a display name.")
+    _check_display_name(display_name)
     _check_time_zone(time_zone)
 
 
@@ -171,8 +180,7 @@ def update_profile(user: User, display_name: str, time_zone: str, about: str = "
     empty; it is kept as one line (the Supervisor reads it)."""
     display_name, time_zone = display_name.strip(), time_zone.strip()
     about = " ".join(about.split())
-    if not display_name:
-        raise Refused("Give a display name.")
+    _check_display_name(display_name)
     _check_time_zone(time_zone)
     if len(about) > MAX_ABOUT_CHARS:
         raise Refused(f"Keep the about-me line to {MAX_ABOUT_CHARS} characters.")
@@ -193,28 +201,43 @@ def authenticate(username: str, password: str) -> User:
     has passed, even with the right password."""
     name = username.strip().lower()
     now = _now()
-    with db.pool().connection() as conn:
+    with db.pool().connection() as conn, conn.transaction():
+        # One login per username at a time, so logins at the same moment can't all get
+        # past the count before any of them is recorded.
+        conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"login:{name}",))
+        conn.execute(
+            "DELETE FROM failed_logins WHERE failed_at <= %s", (now - FAILED_LOGIN_WINDOW,)
+        )
         failures = conn.execute(
-            "SELECT count(*) AS n FROM failed_logins WHERE username = %s AND failed_at > %s",
-            (name, now - FAILED_LOGIN_WINDOW),
+            "SELECT count(*) AS n FROM failed_logins WHERE username = %s", (name,)
         ).fetchone()["n"]
+        row = None
         if failures >= MAX_FAILED_LOGINS:
-            raise TooManyLogins(TOO_MANY_LOGINS)
-        row = conn.execute("SELECT * FROM users WHERE lower(username) = %s", (name,)).fetchone()
-    matches = _password_matches(row["password_hash"] if row else _DUMMY_HASH, password)
-    if not matches or row is None or row["disabled"]:
-        with db.pool().connection() as conn:
-            conn.execute(
-                "INSERT INTO failed_logins (username, failed_at) VALUES (%s, %s)", (name, now)
-            )
-        raise Refused(WRONG_LOGIN)
-    with db.pool().connection() as conn:
-        conn.execute("UPDATE users SET last_login_at = %s WHERE id = %s", (now, row["id"]))
+            refusal = TooManyLogins(TOO_MANY_LOGINS)
+        else:
+            row = conn.execute(
+                "SELECT * FROM users WHERE lower(username) = %s", (name,)
+            ).fetchone()
+            matches = _password_matches(row["password_hash"] if row else _DUMMY_HASH, password)
+            if not matches or row is None or row["disabled"]:
+                conn.execute(
+                    "INSERT INTO failed_logins (username, failed_at) VALUES (%s, %s)",
+                    (name, now),
+                )
+                refusal = Refused(WRONG_LOGIN)
+            else:
+                conn.execute(
+                    "UPDATE users SET last_login_at = %s WHERE id = %s", (now, row["id"])
+                )
+                refusal = None
+    # Raised once the transaction is committed, so the failure stays recorded.
+    if refusal is not None:
+        raise refusal
     return _user(row)
 
 
 @dataclass(frozen=True)
-class Member:
+class UserListing:
     """A User as the Owner panel lists them: when they joined and last logged in."""
 
     user: User
@@ -222,11 +245,11 @@ class Member:
     last_login_at: datetime.datetime | None
 
 
-def all_users() -> list[Member]:
+def all_users() -> list[UserListing]:
     """Every User, the Owner first, then in the order they joined."""
     with db.pool().connection() as conn:
         rows = conn.execute("SELECT * FROM users ORDER BY is_owner DESC, id").fetchall()
-    return [Member(_user(row), row["created_at"], row["last_login_at"]) for row in rows]
+    return [UserListing(_user(row), row["created_at"], row["last_login_at"]) for row in rows]
 
 
 def disable(user_id: int) -> None:
@@ -299,10 +322,7 @@ def register(
     User can't be created (see `create_user`)."""
     _check_new_user(username, password, display_name, time_zone)
     with db.pool().connection() as conn, conn.transaction():
-        row = conn.execute(
-            "SELECT * FROM invites WHERE code = %s FOR UPDATE", (invite.strip(),)
-        ).fetchone()
-        _check_invite(row)
+        row = _claim_code(conn, "invites", invite, _INVITE_REFUSALS)
         created = _insert_user(conn, username, password, display_name, time_zone)
         conn.execute(
             "UPDATE invites SET used_at = %s, used_by = %s WHERE code = %s",
@@ -311,15 +331,36 @@ def register(
     return created
 
 
-def _check_invite(row: dict | None) -> None:
+@dataclass(frozen=True)
+class _CodeRefusals:
+    """Why a single-use code (an Invite or a Reset Code) can't be used."""
+
+    unknown: str
+    used: str
+    expired: str
+    withdrawn: str = ""  # only Invites can be withdrawn
+
+
+_INVITE_REFUSALS = _CodeRefusals(INVITE_UNKNOWN, INVITE_USED, INVITE_EXPIRED, INVITE_WITHDRAWN)
+_RESET_CODE_REFUSALS = _CodeRefusals(RESET_CODE_UNKNOWN, RESET_CODE_USED, RESET_CODE_EXPIRED)
+
+
+def _claim_code(conn, table: str, code: str, refusals: _CodeRefusals) -> dict:
+    """The row of `table` ("invites" or "reset_codes") for `code`, locked for the rest of
+    `conn`'s transaction; Refused if it is unknown, used, withdrawn or expired."""
+    row = conn.execute(
+        sql.SQL("SELECT * FROM {} WHERE code = %s FOR UPDATE").format(sql.Identifier(table)),
+        (code.strip(),),
+    ).fetchone()
     if row is None:
-        raise Refused(INVITE_UNKNOWN)
+        raise Refused(refusals.unknown)
     if row["used_at"] is not None:
-        raise Refused(INVITE_USED)
-    if row["withdrawn_at"] is not None:
-        raise Refused(INVITE_WITHDRAWN)
+        raise Refused(refusals.used)
+    if refusals.withdrawn and row["withdrawn_at"] is not None:
+        raise Refused(refusals.withdrawn)
     if row["expires_at"] <= _now():
-        raise Refused(INVITE_EXPIRED)
+        raise Refused(refusals.expired)
+    return row
 
 
 def _invite(row: dict) -> Invite:
@@ -336,22 +377,28 @@ class ResetCode:
 
 
 def create_reset_code(user_id: int) -> ResetCode:
-    """A new Reset Code for the User, valid for RESET_CODE_HOURS."""
+    """A new Reset Code for the User, valid for RESET_CODE_HOURS. Refused if the User is
+    disabled (or doesn't exist)."""
     created = _now()
     with db.pool().connection() as conn:
-        conn.execute(
-            "INSERT INTO password_resets (code, user_id, created_at, expires_at) "
-            "VALUES (%s, %s, %s, %s)",
-            (secrets.token_urlsafe(9), user_id, created, created + RESET_CODE_LIFETIME),
-        )
-    return open_reset_codes()[-1]
+        row = conn.execute(
+            """WITH target AS (SELECT id, username FROM users WHERE id = %s AND NOT disabled),
+               made AS (
+                   INSERT INTO reset_codes (code, user_id, created_at, expires_at)
+                   SELECT %s, id, %s, %s FROM target RETURNING code, expires_at)
+               SELECT made.code, target.username, made.expires_at FROM made, target""",
+            (user_id, secrets.token_urlsafe(9), created, created + RESET_CODE_LIFETIME),
+        ).fetchone()
+    if row is None:
+        raise Refused(NO_RESET_CODE_FOR_DISABLED)
+    return ResetCode(row["code"], row["username"], row["expires_at"])
 
 
 def open_reset_codes() -> list[ResetCode]:
     """The Reset Codes that can still be used, soonest to expire first."""
     with db.pool().connection() as conn:
         rows = conn.execute(
-            "SELECT r.code, u.username, r.expires_at FROM password_resets r "
+            "SELECT r.code, u.username, r.expires_at FROM reset_codes r "
             "JOIN users u ON u.id = r.user_id "
             "WHERE r.used_at IS NULL AND r.expires_at > %s ORDER BY r.expires_at",
             (_now(),),
@@ -363,26 +410,44 @@ def reset_password(code: str, password: str) -> User:
     """The User the Reset Code is for, with `password` as their new password. The code
     is then used up, every session they had is ended, and their failed logins are
     cleared (the Owner vouched for them). Refused, changing nothing, if the code is
-    wrong, used or expired, or the password is shorter than MIN_PASSWORD_CHARS."""
+    wrong, used or expired, the User is disabled, or the password is shorter than
+    MIN_PASSWORD_CHARS."""
     _check_new_password(password)
     with db.pool().connection() as conn, conn.transaction():
-        reset = conn.execute(
-            "SELECT * FROM password_resets WHERE code = %s FOR UPDATE", (code.strip(),)
-        ).fetchone()
-        if reset is None:
-            raise Refused(RESET_CODE_UNKNOWN)
-        if reset["used_at"] is not None:
-            raise Refused(RESET_CODE_USED)
-        if reset["expires_at"] <= _now():
-            raise Refused(RESET_CODE_EXPIRED)
+        reset = _claim_code(conn, "reset_codes", code, _RESET_CODE_REFUSALS)
+        disabled = conn.execute(
+            "SELECT disabled FROM users WHERE id = %s FOR UPDATE", (reset["user_id"],)
+        ).fetchone()["disabled"]
+        if disabled:
+            raise Refused(RESET_CODE_USER_DISABLED)
         conn.execute(
-            "UPDATE password_resets SET used_at = %s WHERE code = %s", (_now(), reset["code"])
+            "UPDATE reset_codes SET used_at = %s WHERE code = %s", (_now(), reset["code"])
         )
-        row = _set_password(conn, reset["user_id"], password)
-        conn.execute(
-            "DELETE FROM failed_logins WHERE username = lower(%s)", (row["username"],)
-        )
+        row = _give_new_password(conn, reset["user_id"], password)
     return _user(row)
+
+
+def reset_password_on_this_machine(username: str, password: str) -> User:
+    """Give the User with this username `password` as their new password, for the
+    reset-password command (e.g. an Owner who is locked out). Like a redeemed Reset Code,
+    it ends every session they have and clears their failed logins. Refused if there is
+    no such User or the password is shorter than MIN_PASSWORD_CHARS."""
+    _check_new_password(password)
+    with db.pool().connection() as conn, conn.transaction():
+        found = conn.execute(
+            "SELECT id FROM users WHERE lower(username) = lower(%s)", (username.strip(),)
+        ).fetchone()
+        if found is None:
+            raise Refused(f"There is no User {username.strip()!r}.")
+        row = _give_new_password(conn, found["id"], password)
+    return _user(row)
+
+
+def _give_new_password(conn, user_id: int, password: str) -> dict:
+    """Set a password someone vouched for: also clears the User's failed logins."""
+    row = _set_password(conn, user_id, password)
+    conn.execute("DELETE FROM failed_logins WHERE username = lower(%s)", (row["username"],))
+    return row
 
 
 def change_password(user: User, current_password: str, new_password: str) -> None:
@@ -477,6 +542,11 @@ def _password_matches(password_hash: str, password: str) -> bool:
         return False
 
 
+def _check_display_name(display_name: str) -> None:
+    if not display_name.strip():
+        raise Refused("Give a display name.")
+
+
 def _check_time_zone(time_zone: str) -> None:
     try:
         zoneinfo.ZoneInfo(time_zone)
@@ -496,7 +566,7 @@ def _user(row: dict) -> User:
     )
 
 
-USAGE = f"Usage: {CREATE_OWNER_COMMAND}"
+USAGE = f"Usage: {CREATE_OWNER_COMMAND}\n       {RESET_PASSWORD_COMMAND}"
 
 
 def main(
@@ -504,9 +574,13 @@ def main(
     ask: Callable[[str], str] = input,
     ask_secret: Callable[[str], str] = getpass.getpass,
 ) -> int:
-    """The create-owner command: asks for the Owner's username, password, display name
-    and time zone. Returns the exit code."""
+    """The create-owner command (asks for the Owner's username, password, display name
+    and time zone) and the reset-password command (asks for the new password). Returns
+    the exit code."""
     argv = sys.argv[1:] if argv is None else argv
+    if len(argv) == 2 and argv[0] == "reset-password":
+        db.init_schema()
+        return _reset_password_command(argv[1], ask_secret)
     if argv != ["create-owner"]:
         print(USAGE, file=sys.stderr)
         return 2
@@ -527,6 +601,23 @@ def main(
         print(f"{refused} Nothing was created.", file=sys.stderr)
         return 1
     print(f"Created the Owner {created.username!r}. Log in to Perry with it.")
+    return 0
+
+
+def _reset_password_command(username: str, ask_secret: Callable[[str], str]) -> int:
+    password = ask_secret(f"New password (at least {MIN_PASSWORD_CHARS} characters): ")
+    if ask_secret("New password again: ") != password:
+        print("The passwords don't match. Nothing was changed.", file=sys.stderr)
+        return 1
+    try:
+        user = reset_password_on_this_machine(username, password)
+    except Refused as refused:
+        print(f"{refused} Nothing was changed.", file=sys.stderr)
+        return 1
+    print(
+        f"Reset the password of {user.username!r}, and logged them out everywhere. "
+        "Log in with the new one."
+    )
     return 0
 
 

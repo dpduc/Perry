@@ -9,12 +9,17 @@ HTML, shown in the order they are defined here. To add one:
 
     @router.post("/users/{user_id}/disable")
     def disable(user_id: int):
-        ...
+        try:
+            users.disable(user_id)
+        except users.Refused:
+            return back_to_panel(OWNER_CANT_BE_DISABLED)
         return back_to_panel()
 
 Every route on `router` is Owner-only: without a session it sends you to /login, and
 any other User is refused. Forms post to a route here, which does the work and calls
-`back_to_panel()` (or `back_to_panel(error)` to show a message at the top).
+`back_to_panel()`, or `back_to_panel(error)` with one of the keys in ERRORS to show
+its message at the top. The panel never shows text from its URL: an unknown key shows
+nothing.
 """
 
 import html
@@ -76,8 +81,18 @@ def install(app: FastAPI) -> None:
     )
 
 
+# The messages the panel can show at the top, by the key in its URL.
+OWNER_CANT_BE_DISABLED = "owner-cant-be-disabled"
+NO_RESET_CODE_FOR_DISABLED = "no-reset-code-for-disabled"
+ERRORS = {
+    OWNER_CANT_BE_DISABLED: users.OWNER_CANT_BE_DISABLED,
+    NO_RESET_CODE_FOR_DISABLED: users.NO_RESET_CODE_FOR_DISABLED,
+}
+
+
 def back_to_panel(error: str = "") -> RedirectResponse:
-    """Back to the panel after a form, showing `error` if there is one."""
+    """Back to the panel after a form, showing the message for `error` (a key in ERRORS)
+    if there is one."""
     query = f"?error={quote(error)}" if error else ""
     return RedirectResponse(PATH + query, status_code=303)
 
@@ -87,7 +102,7 @@ def panel(owner: Annotated[users.User, Depends(owner_only)], error: str = ""):
     sections = "\n".join(render(owner) for render in SECTIONS)
     body = f"""<h1>Owner panel</h1>
 <p><a href="{pages.CHAT_PATH}/">Back to Perry</a></p>
-{pages.error_line(error)}
+{pages.error_line(ERRORS.get(error, ""))}
 {sections}"""
     return pages.page("Owner panel", body, wide=True)
 
@@ -140,7 +155,7 @@ def withdraw_invite(code: str):
 
 @section
 def users_section(owner: users.User) -> str:
-    rows = "\n".join(_user_row(member, owner) for member in users.all_users())
+    rows = "\n".join(_user_row(listing, owner) for listing in users.all_users())
     return f"""<section><h2>Users</h2>
 <p>A disabled User can't log in, and is logged out at once. Their Threads and usage are kept.</p>
 <table><tr><th>Username</th><th>Joined</th><th>Last login</th><th>Status</th><th></th></tr>
@@ -148,9 +163,9 @@ def users_section(owner: users.User) -> str:
 </section>"""
 
 
-def _user_row(member: users.Member, owner: users.User) -> str:
-    user = member.user
-    last_login = local_time(member.last_login_at, owner) if member.last_login_at else "never"
+def _user_row(listing: users.UserListing, owner: users.User) -> str:
+    user = listing.user
+    last_login = local_time(listing.last_login_at, owner) if listing.last_login_at else "never"
     if user.is_owner:
         status, action = "active", "Owner"
     elif user.disabled:
@@ -162,7 +177,7 @@ def _user_row(member: users.Member, owner: users.User) -> str:
         )
     return f"""<tr data-user="{user.id}">
   <td>{html.escape(user.username)}</td>
-  <td>{local_time(member.joined_at, owner)}</td>
+  <td>{local_time(listing.joined_at, owner)}</td>
   <td>{last_login}</td>
   <td>{status}</td>
   <td>{action}</td></tr>"""
@@ -177,8 +192,8 @@ def _user_button(user: users.User, action: str, label: str) -> str:
 def disable_user(user_id: int):
     try:
         users.disable(user_id)
-    except users.Refused as refused:
-        return back_to_panel(str(refused))
+    except users.Refused:  # the only refusal: the Owner
+        return back_to_panel(OWNER_CANT_BE_DISABLED)
     return back_to_panel()
 
 
@@ -190,7 +205,10 @@ def enable_user(user_id: int):
 
 @router.post("/users/{user_id}/reset")
 def issue_reset_code(user_id: int):
-    users.create_reset_code(user_id)
+    try:
+        users.create_reset_code(user_id)
+    except users.Refused:  # the only refusal: a disabled User
+        return back_to_panel(NO_RESET_CODE_FOR_DISABLED)
     return back_to_panel()
 
 

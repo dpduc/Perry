@@ -147,6 +147,97 @@ def test_only_the_owner_issues_reset_codes(sam, owner_browser):
     assert reset_codes_listed(owner_browser) == {}
 
 
+def disable(owner_client, username: str) -> None:
+    owner_client.post(f"/owner/users/{user_id_of(owner_client, username)}/disable")
+
+
+def test_a_disabled_user_cant_redeem_a_reset_code(sam, owner_browser):
+    code = issue_reset_code(owner_browser, "sam")
+    disable(owner_browser, "sam")
+
+    response = reset(sam, code)
+
+    assert response.status_code == 400
+    assert "disabled" in response.text
+    assert not is_logged_in(sam)
+    owner_browser.post(f"/owner/users/{user_id_of(owner_browser, 'sam')}/enable")
+    assert "Wrong username or password." in log_in(sam, "sam", NEW_PASSWORD).text
+    log_in(sam, "sam", SAMS_PASSWORD)
+    assert is_logged_in(sam)
+
+
+def test_the_owner_isnt_offered_a_reset_code_for_a_disabled_user(sam, owner_browser):
+    sams_id = user_id_of(owner_browser, "sam")
+    disable(owner_browser, "sam")
+
+    assert f"/owner/users/{sams_id}/reset" not in owner_browser.get("/owner").text
+    response = owner_browser.post(f"/owner/users/{sams_id}/reset")
+    assert "disabled" in response.text
+    assert reset_codes_listed(owner_browser) == {}
+
+
+def test_a_new_reset_code_is_the_one_just_created(owner, monkeypatch):
+    """Not just the open one that expires last."""
+    from perry import users
+
+    sam = users.create_user("sam", "sam-password-1", "Sam", "UTC")
+    alex = users.create_user("alex", "alex-password-1", "Alex", "UTC")
+    hours_from_now(monkeypatch, 1)
+    users.create_reset_code(alex.id)
+    monkeypatch.undo()
+
+    assert users.create_reset_code(sam.id).username == "sam"
+
+
+# Resetting a password on this machine (python -m perry.users reset-password)
+
+
+def reset_on_this_machine(username: str, *typed: str) -> int:
+    """Run `python -m perry.users reset-password <username>`, typing `typed` at its
+    password prompts (the new password, then again)."""
+    from perry import users
+
+    answers = iter(typed)
+    return users.main(
+        ["reset-password", username], ask=lambda _: next(answers),
+        ask_secret=lambda _: next(answers),
+    )
+
+
+def test_a_locked_out_owner_resets_their_password_on_this_machine(owner_client, capsys):
+    from fastapi.testclient import TestClient
+
+    from perry import web
+
+    with TestClient(web.create_app()) as other_browser:
+        for _ in range(5):
+            log_in(other_browser, OWNER_USERNAME, "not-the-password")
+
+        assert reset_on_this_machine(OWNER_USERNAME, NEW_PASSWORD, NEW_PASSWORD) == 0
+
+        assert not is_logged_in(owner_client)  # every session ended
+        log_in(other_browser, OWNER_USERNAME, NEW_PASSWORD)  # the failed logins cleared
+        assert is_logged_in(other_browser)
+    assert "reset" in capsys.readouterr().out.lower()
+
+
+def test_resetting_an_unknown_user_on_this_machine_fails_clearly(owner, capsys):
+    assert reset_on_this_machine("nobody", NEW_PASSWORD, NEW_PASSWORD) == 1
+    assert "nobody" in capsys.readouterr().err
+
+
+def test_mismatched_passwords_on_this_machine_change_nothing(owner_client, capsys):
+    assert reset_on_this_machine(OWNER_USERNAME, NEW_PASSWORD, "something-else-1") == 1
+    assert "don't match" in capsys.readouterr().err
+    assert is_logged_in(owner_client)
+
+
+def test_a_short_password_on_this_machine_is_refused(owner_client, capsys):
+    assert reset_on_this_machine(OWNER_USERNAME, "short", "short") == 1
+    assert "at least 10 characters" in capsys.readouterr().err
+    assert is_logged_in(owner_client)
+
+
 # Changing your own password
 
 

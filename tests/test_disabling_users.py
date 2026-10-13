@@ -80,6 +80,38 @@ def test_failed_logins_for_unknown_usernames_are_limited_too(client):
     assert TRY_AGAIN_LATER in log_in(client, "nobody", "anything-at-all").text
 
 
+def test_logins_at_the_same_moment_dont_get_past_the_limit(owner):
+    """Many wrong passwords at once: still only 5 are checked, the rest are refused."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from perry import users
+
+    def attempt(_) -> str:
+        try:
+            users.authenticate(OWNER_USERNAME, "not-the-password")
+        except users.TooManyLogins:
+            return "limited"
+        except users.Refused:
+            return "wrong"
+        return "in"
+
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        outcomes = list(pool.map(attempt, range(10)))
+
+    assert sorted(outcomes) == ["limited"] * 5 + ["wrong"] * 5
+
+
+def test_failed_logins_older_than_the_window_are_deleted(client, monkeypatch, database):
+    fail_to_log_in(client, OWNER_USERNAME, 3)
+
+    minutes_from_now(monkeypatch, 16)
+    fail_to_log_in(client, "someone-else", 1)
+
+    with database.pool().connection() as conn:
+        kept = conn.execute("SELECT username FROM failed_logins").fetchall()
+    assert [row["username"] for row in kept] == ["someone-else"]
+
+
 # The Users list
 
 
@@ -182,6 +214,14 @@ def test_the_owner_cant_disable_themselves(owner_client):
     assert "The Owner can't be disabled." in response.text
     assert is_logged_in(owner_client)
     assert status_of(owner_client, OWNER_USERNAME) == "active"
+
+
+def test_the_panel_shows_no_message_made_up_in_its_link(owner_client):
+    """A link to the panel can't make it say anything (e.g. a phishing message)."""
+    page = owner_client.get("/owner?error=Perry+was+hacked:+log+in+at+evil.example").text
+
+    assert "hacked" not in page
+    assert 'role="alert"' not in page
 
 
 def test_the_panel_offers_no_disable_button_for_the_owner(sam, owner_browser):

@@ -127,7 +127,13 @@ CREATE INDEX IF NOT EXISTS failed_logins_idx ON failed_logins (username, failed_
 
 -- Reset Codes (perry.users): single-use codes from the Owner that let one User who forgot
 -- their password choose a new one.
-CREATE TABLE IF NOT EXISTS password_resets (
+-- Called password_resets before; renamed to match the glossary.
+DO $$ BEGIN
+    IF to_regclass('password_resets') IS NOT NULL AND to_regclass('reset_codes') IS NULL THEN
+        ALTER TABLE password_resets RENAME TO reset_codes;
+    END IF;
+END $$;
+CREATE TABLE IF NOT EXISTS reset_codes (
     code       text PRIMARY KEY,
     user_id    bigint NOT NULL REFERENCES users(id),
     created_at timestamptz NOT NULL,

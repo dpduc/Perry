@@ -84,6 +84,10 @@ In the left **Database Navigator** panel:
    * `documents`: Ingested files (PDFs, Markdown, text).
    * `chunks`: Text chunks, page numbers, and vector embeddings.
    * `threads`: Conversation Threads, their titles, and the User each belongs to (`user_id`).
+   * `users`: Users (one is the Owner): username, password hash, Profile, and whether they are disabled.
+   * `invites`: Invites the Owner created, and who registered with each.
+   * `reset_codes`: Reset Codes the Owner issued, and when each was used.
+   * `failed_logins`: Recent failed logins per username, for the login limit.
    * `usage_ledger`: Token usage and cost per model call, with its Turn, Thread and User (`user_id`, empty outside a Turn).
    * `datasets`: Registry of uploaded CSV and Excel files.
    * `checkpoints*`: LangGraph conversation memory and graph checkpoints.
