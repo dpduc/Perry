@@ -98,7 +98,7 @@ def test_a_techniques_model_calls_are_recorded_with_their_kind_and_count_toward_
     monkeypatch.setenv("PERRY_TURN_TOKEN_CEILING", "1000")
     perry.script(with_usage("three rewrites", 600, 500), "never reached")
 
-    with usage.turn(None) as turn:
+    with usage.turn(None, None) as turn:
         models.chat_model(kind="rewrite").invoke("Rewrite: Q3 budget?")
         with pytest.raises(usage.TurnTokenCeilingReached):
             models.chat_model(kind="rewrite").invoke("Rewrite: Q3 budget again?")

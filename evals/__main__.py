@@ -45,7 +45,7 @@ class EvalThread:
         from perry import supervisor, threads
 
         if self.thread_id is None:
-            self.thread_id = threads.create(message)
+            self.thread_id = threads.create(self.user, message)
         return supervisor.run_turn(self.user, self.thread_id, message)
 
     def resume(self, decision):

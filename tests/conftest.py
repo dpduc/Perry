@@ -132,7 +132,7 @@ class Perry:
         from perry import supervisor, threads
 
         if self.thread_id is None:
-            self.thread_id = threads.create(message)
+            self.thread_id = threads.create(self.user, message)
         return supervisor.run_turn(
             self.user, self.thread_id, message, images=list(images), technique=technique
         )
@@ -151,11 +151,11 @@ class Perry:
         from perry import supervisor, threads, voice
 
         turn_id = voice.new_turn()
-        transcript = voice.transcribe(audio, self.thread_id, turn_id)
+        transcript = voice.transcribe(self.user, audio, self.thread_id, turn_id)
         if self.thread_id is None:
-            self.thread_id = threads.create(transcript)
+            self.thread_id = threads.create(self.user, transcript)
         text = supervisor.run_turn(self.user, self.thread_id, transcript, turn_id=turn_id)
-        speech = voice.read_aloud(text, self.thread_id, turn_id)
+        speech = voice.read_aloud(self.user, text, self.thread_id, turn_id)
         return VoiceReply(transcript, text, speech.audio, speech.note)
 
     def history(self) -> list[dict]:

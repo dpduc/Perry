@@ -2,6 +2,7 @@
 
 import pytest
 from fakes import call, spoken, with_usage
+from logins import request_as
 
 
 def test_voice_request_is_shown_as_the_users_message_and_answered_in_text_and_audio(perry):
@@ -64,7 +65,7 @@ def test_voice_request_after_the_daily_cap_is_refused_without_transcribing(
     recording = tmp_path / "request.wav"
     recording.write_bytes(spoken("How big is my Q3 marketing budget?"))
 
-    message, history, _, voice_turn = app.hear(str(recording), [], perry.thread_id)
+    message, history, _, voice_turn = app.hear(request_as(perry.user), str(recording), [], perry.thread_id)
 
     assert message == {"text": "", "files": []}  # nothing is sent as a Turn
     assert history == [
