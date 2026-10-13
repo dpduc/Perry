@@ -356,6 +356,7 @@ def build(privacy_notice: str = "") -> gr.Blocks:
         with gr.Sidebar():
             gr.Markdown("## Perry")
             who = gr.Markdown()
+            gr.Button("Profile", link="/profile", size="sm")
             gr.Button("Log out", link="/logout", size="sm")
             new_button = gr.Button("New thread", variant="primary")
             thread_picker = gr.Dropdown(

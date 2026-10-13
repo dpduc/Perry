@@ -72,6 +72,30 @@ def create_app(blocks: gr.Blocks | None = None, *, secure_cookies: bool = False)
         response.delete_cookie(SESSION_COOKIE, httponly=True, secure=secure_cookies, samesite="lax")
         return response
 
+    @served.get("/profile", response_class=HTMLResponse)
+    def profile_page(request: Request):
+        user = _user(request)
+        if user is None:
+            return RedirectResponse("/login", status_code=303)
+        return _profile_page(user.profile)
+
+    @served.post("/profile", response_class=HTMLResponse)
+    def save_profile(
+        request: Request,
+        display_name: str = Form(""),
+        time_zone: str = Form(""),
+        about: str = Form(""),
+    ):
+        user = _user(request)
+        if user is None:
+            return RedirectResponse("/login", status_code=303)
+        try:
+            saved = users.update_profile(user, display_name, time_zone, about)
+        except users.Refused as refused:
+            typed = users.Profile(display_name, time_zone, about)
+            return _profile_page(typed, error=str(refused), status_code=400)
+        return _profile_page(saved.profile, saved=True)
+
     return gr.mount_gradio_app(
         served,
         blocks if blocks is not None else chat_ui.build(),
@@ -107,6 +131,7 @@ PAGE = """<!doctype html>
   button {{ margin-top: 1.5rem; width: 100%; padding: .65rem; font-size: 1rem;
            border: 0; border-radius: 6px; background: #2f5d50; color: #fff; cursor: pointer; }}
   .error {{ color: #a3261b; margin-top: 1rem; }}
+  .saved {{ color: #2f5d50; margin-top: 1rem; }}
 </style></head>
 <body><main>{body}</main></body></html>"""
 
@@ -123,6 +148,31 @@ def _login_page(error: str = "", username: str = "", status_code: int = 200) -> 
   <button type="submit">Log in</button>
 </form>"""
     return HTMLResponse(PAGE.format(title="Log in · Perry", body=body), status_code=status_code)
+
+
+def _profile_page(
+    profile: users.Profile, error: str = "", saved: bool = False, status_code: int = 200
+) -> HTMLResponse:
+    if error:
+        note = f'<p class="error" role="alert">{html.escape(error)}</p>'
+    else:
+        note = '<p class="saved" role="status">Saved.</p>' if saved else ""
+    body = f"""<h1>Your Profile</h1>
+<p>Perry reads this when answering you.</p>
+{note}
+<form method="post" action="/profile">
+  <label>Display name <input name="display_name" required autocomplete="name"
+         value="{html.escape(profile.display_name)}"></label>
+  <label>Time zone <input name="time_zone" required placeholder="Europe/London"
+         value="{html.escape(profile.time_zone)}"></label>
+  <label>About you (optional, one line)
+    <input name="about" maxlength="{users.MAX_ABOUT_CHARS}"
+           placeholder="e.g. a second-year chemistry student"
+           value="{html.escape(profile.about)}"></label>
+  <button type="submit">Save</button>
+</form>
+<p><a href="{CHAT_PATH}/">Back to Perry</a></p>"""
+    return HTMLResponse(PAGE.format(title="Profile · Perry", body=body), status_code=status_code)
 
 
 def main() -> None:

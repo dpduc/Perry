@@ -71,7 +71,7 @@ Your data lives in the Postgres from `compose.yaml`, in the Docker volume `pgdat
 
 ### The UI
 
-Perry asks you to log in first, even when it runs on your own machine; a login lasts 14 days in that browser. *Log out* is at the top of the sidebar.
+Perry asks you to log in first, even when it runs on your own machine; a login lasts 14 days in that browser. *Log out* is at the top of the sidebar. *Profile* there lets you change your display name, time zone and an optional about-me line; Perry reads them on every Turn, and works out "today" or "this week" in your time zone.
 
 - **Sidebar:** *New thread* and a *Threads* picker to resume an earlier conversation; *Documents* and *Datasets* upload areas (the Datasets list shows each name with its columns); today's usage (`Today: N tokens · $x of $cap`); and *Calendar and email*, where you pick **Test account** or **Real account** and click **Connect Google**.
 - **Chat:** type in the box (the paperclip attaches images). Below it, **Record** is push-to-talk and the player on the right speaks Perry's answer.
