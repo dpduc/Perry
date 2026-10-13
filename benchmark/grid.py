@@ -133,7 +133,7 @@ def ask_perry(setup: str, question: str) -> Answer:
     from perry.agents import knowledge
 
     forced, mode = (None, setup) if setup in picking_modes() else (setup, None)
-    with usage.turn(f"benchmark-{setup}") as turn:
+    with usage.turn(None, f"benchmark-{setup}") as turn:
         try:
             findings = knowledge.find(question, forced, picking_mode=mode)
             text = knowledge.with_found_with(findings.text, findings.found_with)

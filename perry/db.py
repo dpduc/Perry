@@ -141,6 +141,9 @@ CREATE TABLE IF NOT EXISTS usage_ledger (
 );
 CREATE INDEX IF NOT EXISTS usage_ledger_recorded_at_idx ON usage_ledger (recorded_at);
 CREATE INDEX IF NOT EXISTS usage_ledger_turn_idx ON usage_ledger (turn_id);
+-- The User whose Turn made the call; NULL outside a Turn (e.g. ingestion) and for
+-- calls from before Users existed.
+ALTER TABLE usage_ledger ADD COLUMN IF NOT EXISTS user_id bigint REFERENCES users(id);
 
 -- Facts about the stored data, e.g. which model embedded it (perry.reembed).
 CREATE TABLE IF NOT EXISTS store_facts (

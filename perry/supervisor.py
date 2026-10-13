@@ -32,7 +32,7 @@ from langgraph.config import get_config
 from langgraph.errors import GraphRecursionError
 from langgraph.types import Command, StateSnapshot
 
-from perry import charts, db, models, privacy, retries, usage, workspace
+from perry import charts, db, models, privacy, retries, threads, usage, workspace
 from perry.agents import analysis, knowledge, task
 from perry.images import user_message
 from perry.users import Profile, User
@@ -294,7 +294,10 @@ def run_turn(
     `turn_id` continues a Turn whose model calls began before the message existed
     (e.g. transcribing a voice request); by default the Turn is new. `technique` (the
     per-request override) names the Retrieval Technique the Knowledge Agent must use
-    if the Supervisor asks it; by default the Knowledge Agent picks."""
+    if the Supervisor asks it; by default the Knowledge Agent picks.
+
+    Raises threads.ThreadNotFound if the Thread isn't `user`'s."""
+    threads.require(thread_id, user)
     config = _config(thread_id)
     graph = supervisor(user)
     cancelled = _cancel_pending(graph, config)
@@ -304,7 +307,7 @@ def run_turn(
         request = user_message(message, images)
         before = graph.get_state(config)
         run = _TurnRun.start(graph, user, thread_id, before, request, turn_id, technique)
-        outcome = _run(run, {"messages": [request]})
+        outcome = _run(user, run, {"messages": [request]})
     if cancelled and isinstance(outcome, str):
         return f"{cancelled}\n\n{outcome}"
     return outcome
@@ -312,7 +315,9 @@ def run_turn(
 
 def resume_turn(user: User, thread_id: str, decision: Decision) -> TurnResult:
     """Continue the Turn waiting on a Confirmation with `user`'s decision.
-    Returns the answer, or the next Confirmation."""
+    Returns the answer, or the next Confirmation. Raises threads.ThreadNotFound if the
+    Thread isn't `user`'s."""
+    threads.require(thread_id, user)
     graph = supervisor(user)
     before = graph.get_state(_config(thread_id))
     if not before.interrupts:
@@ -320,7 +325,7 @@ def resume_turn(user: User, thread_id: str, decision: Decision) -> TurnResult:
     requests = before.interrupts[0].value["action_requests"]
     rest = [{"type": "reject", "message": ONE_AT_A_TIME}] * (len(requests) - 1)
     resume = Command(resume={"decisions": [_decision(decision, requests[0]), *rest]})
-    return _run(_TurnRun.start(graph, user, thread_id, before, None), resume)
+    return _run(user, _TurnRun.start(graph, user, thread_id, before, None), resume)
 
 
 def pending_confirmation(thread_id: str) -> Confirmation | None:
@@ -355,10 +360,10 @@ _STOP_REPLIES: dict[type[BaseException], Callable[[Any], str]] = {
 _DELIBERATE_STOPS = tuple(_STOP_REPLIES)
 
 
-def _run(run: _TurnRun, run_input) -> TurnResult:
+def _run(user: User, run: _TurnRun, run_input) -> TurnResult:
     """Run (or, with no `request`, resume) a Turn and clean up the Thread if it stops early."""
     try:
-        with usage.turn(run.thread_id, run.turn_id):
+        with usage.turn(user, run.thread_id, run.turn_id):
             result = run.graph.invoke(run_input, run.config)
     except _DELIBERATE_STOPS as stopped:
         if isinstance(stopped, usage.TurnTokenCeilingReached) and run.request is not None:

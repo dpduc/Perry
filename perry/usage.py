@@ -1,8 +1,9 @@
 """The usage ledger: every model call's tokens and cost, and the per-Turn token ceiling.
 
 `perry.models` records each call here; nothing else needs to. Calls made inside a
-`turn(thread_id)` block are attributed to that Turn and its Thread, and count toward
-its token ceiling. Calls outside one (e.g. ingestion) have no Thread or Turn.
+`turn(user, thread_id)` block are attributed to that Turn, its Thread and its User,
+and count toward its token ceiling. Calls outside one (e.g. ingestion) have no
+Thread, Turn or User.
 
 Prices come from a TOML price table (USD per million tokens, per model), read on
 every call so edits apply without a restart:
@@ -23,8 +24,12 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from perry import db
+
+if TYPE_CHECKING:
+    from perry.users import User
 
 log = logging.getLogger(__name__)
 
@@ -45,6 +50,7 @@ class Usage:
 class Turn:
     thread_id: str | None
     id: str
+    user_id: int | None = None
 
 
 class DailyCapReached(Exception):
@@ -70,11 +76,13 @@ _current: ContextVar[Turn | None] = ContextVar("perry_turn", default=None)
 
 
 @contextmanager
-def turn(thread_id: str | None, turn_id: str | None = None) -> Iterator[Turn]:
-    """Attribute every model call in this block to the Turn `turn_id` (by default a new
-    one) on `thread_id`. Re-entering a Turn (e.g. after its Confirmation) keeps adding
+def turn(
+    user: "User | None", thread_id: str | None, turn_id: str | None = None
+) -> Iterator[Turn]:
+    """Attribute every model call in this block to `user`'s Turn `turn_id` (by default a
+    new one) on `thread_id`. Re-entering a Turn (e.g. after its Confirmation) keeps adding
     to its token ceiling."""
-    current = Turn(thread_id, turn_id or new_turn_id())
+    current = Turn(thread_id, turn_id or new_turn_id(), user.id if user else None)
     token = _current.set(current)
     try:
         yield current
@@ -143,11 +151,13 @@ def record(kind: str, model: str, input_tokens: int, output_tokens: int = 0) -> 
     with db.pool().connection() as conn:
         conn.execute(
             """INSERT INTO usage_ledger
-               (thread_id, turn_id, kind, model, input_tokens, output_tokens, cost_usd)
-               VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+               (thread_id, turn_id, user_id, kind, model, input_tokens, output_tokens,
+                cost_usd)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
             (
                 current.thread_id if current else None,
                 current.id if current else None,
+                current.user_id if current else None,
                 kind,
                 model,
                 input_tokens,

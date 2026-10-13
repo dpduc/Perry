@@ -64,7 +64,7 @@ def ask(text: str) -> str:
     """One Turn, all in one Thread per test (a test's first message opens it)."""
     from perry import threads, users
 
-    thread = _threads.get("current") or threads.create(text)
+    thread = _threads.get("current") or threads.create(users.owner(), text)
     _threads["current"] = thread
     return run_turn(users.owner(), thread, text)
 
