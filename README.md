@@ -36,6 +36,7 @@ Then create `.env` in the repo root (it's gitignored, never commit it):
 GEMINI_API_KEY=...                   # https://aistudio.google.com/apikey (the free tier is enough)
 OPENAI_API_KEY=...                   # optional, paid: answers when Gemini's free quota is used up, and runs the benchmark grid
 PERRY_SESSION_SECRET=...             # signs login sessions: uv run python -c "import secrets; print(secrets.token_urlsafe(32))"
+PERRY_NGROK_DOMAIN=...               # only to serve over ngrok: your free static domain, e.g. your-name.ngrok-free.app
 # Optional LangSmith tracing; the endpoint must match your account's region:
 # api. (US), eu.api. or apac.api.smith.langchain.com (a 403 on every call means a region mismatch)
 LANGCHAIN_TRACING_V2=true
@@ -76,6 +77,24 @@ Perry asks you to log in first, even when it runs on your own machine; a login l
 - **Sidebar:** *New thread* and a *Threads* picker to resume an earlier conversation; *Documents* and *Datasets* upload areas (the Datasets list shows each name with its columns); today's usage (`Today: N tokens · $x of $cap`); and *Calendar and email*, where you pick **Test account** or **Real account** and click **Connect Google**.
 - **Chat:** type in the box (the paperclip attaches images). Below it, **Record** is push-to-talk and the player on the right speaks Perry's answer.
 - When Perry needs your approval, a **Confirmation card** appears under the chat with the editable fields, **Approve**, **Reject** and a note box.
+
+### Share Perry over ngrok
+
+To let other Users reach Perry from the internet, serve it through an [ngrok](https://ngrok.com) tunnel on your free static domain. Once:
+
+1. Sign up at ngrok, install it (`winget install ngrok.ngrok`) and connect your account: `ngrok config add-authtoken <your token>` (the token is on the dashboard's *Your Authtoken* page).
+2. Claim your free static domain on the dashboard's *Domains* page (one per free account) and put it in `.env` as `PERRY_NGROK_DOMAIN`, e.g. `PERRY_NGROK_DOMAIN=your-name.ngrok-free.app`.
+3. Make sure `.env` has `PERRY_SESSION_SECRET` and that you've created the Owner (see [Setup](#setup)).
+
+Then, from the repo root:
+
+```powershell
+uv run python -m scripts.serve
+```
+
+It starts Postgres (`docker compose up -d`, unless it's already up), checks that Ollama answers, launches Perry on 127.0.0.1:7860 (never on a public interface), opens the tunnel with `ngrok http --url=$PERRY_NGROK_DOMAIN` and prints the public URL, `https://<your domain>/`. It refuses to start, saying what's missing, without `PERRY_NGROK_DOMAIN`, `PERRY_SESSION_SECRET`, ngrok, Ollama or an Owner. Ctrl+C stops Perry and ngrok.
+
+Served this way the login cookie is marked Secure, so log in through the public URL; plain `uv run python -m perry.web` is for using Perry on this machine only. ngrok's free plan shows visitors a one-time warning page before Perry; click *Visit Site*. Every Turn anyone takes spends your Gemini quota and Daily Cap.
 
 ## Tutorials
 
@@ -221,6 +240,7 @@ All optional; add any of these to `.env` to override the default.
 
 | Setting | Default | What it does |
 |---|---|---|
+| `PERRY_NGROK_DOMAIN` | none | Your ngrok static domain; `scripts.serve` needs it (see [Share Perry over ngrok](#share-perry-over-ngrok)) |
 | `PERRY_LLM_MODEL` | `gemini-3.8-flash` | Chat model (free tier); also used for speech-to-text and image reading |
 | `PERRY_FALLBACK_LLM_MODEL` | `gpt-5.4-mini` | Paid OpenAI chat model used once Gemini's free quota is used up or it stays overloaded (needs `OPENAI_API_KEY`); give it a price in `prices.toml` |
 | `PERRY_BENCHMARK_LLM_MODEL` | `gpt-5.4-nano` | Paid OpenAI chat model every benchmark-grid Turn runs on |
