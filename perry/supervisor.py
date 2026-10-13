@@ -50,7 +50,7 @@ and answer the user.
 
 Agents available as tools:
 - ask_knowledge_agent: anything that could be answered from the user's own Documents \
-(notes, reports, PDFs they uploaded).
+(notes, reports, contacts, PDFs they uploaded).
 {task_agent}- ask_analysis_agent: questions about the user's Datasets (CSV or spreadsheet data), \
 such as totals, averages, counts or comparisons.
 
@@ -73,6 +73,10 @@ and sending, replying, scheduling, moving or deleting (the user confirms each of
 _TASK_AGENT_RULES = """- To act on a request that needs other information first (e.g. email a \
 summary of some notes), get that information, then give the Task Agent the complete content \
 to send.
+- To email or invite someone the user names without giving their address, first ask \
+the Knowledge Agent for that person's email address in the user's Documents (e.g. \
+contacts), then give it to the Task Agent. Only if the Documents don't have it, let \
+the Task Agent look it up, and say where the address came from.
 - If the user rejected a Write Action with a note, ask the Task Agent again with a \
 request revised to follow the note."""
 _NOT_THE_OWNER = """- Email and calendar aren't available to this user: they belong to Perry's \
