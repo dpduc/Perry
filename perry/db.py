@@ -106,6 +106,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS users_one_owner_idx ON users (is_owner) WHERE 
 ALTER TABLE threads ADD COLUMN IF NOT EXISTS user_id bigint REFERENCES users(id);
 CREATE INDEX IF NOT EXISTS threads_user_idx ON threads (user_id);
 
+-- Invites (perry.users): single-use codes from the Owner that let one person register.
+-- Not tied to a name; used_by is the User who registered with it.
+CREATE TABLE IF NOT EXISTS invites (
+    code         text PRIMARY KEY,
+    created_at   timestamptz NOT NULL,
+    expires_at   timestamptz NOT NULL,
+    used_at      timestamptz,
+    used_by      bigint REFERENCES users(id),
+    withdrawn_at timestamptz
+);
+
 -- Datasets are real tables in the analytics schema; this is their registry.
 CREATE SCHEMA IF NOT EXISTS analytics;
 CREATE TABLE IF NOT EXISTS datasets (

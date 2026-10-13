@@ -9,8 +9,10 @@ Create the Owner once with:
     uv run python -m perry.users create-owner
 """
 
+import datetime
 import getpass
 import os
+import secrets
 import sys
 import zoneinfo
 from collections.abc import Callable
@@ -28,10 +30,17 @@ SESSION_DAYS = 14
 SESSION_SECONDS = SESSION_DAYS * 24 * 60 * 60
 SESSION_SECRET_VARIABLE = "PERRY_SESSION_SECRET"
 CREATE_OWNER_COMMAND = "uv run python -m perry.users create-owner"
+INVITE_DAYS = 7
+INVITE_LIFETIME = datetime.timedelta(days=INVITE_DAYS)
 
 WRONG_LOGIN = "Wrong username or password."
 NO_OWNER = f"Perry has no Owner yet. Create one first with: {CREATE_OWNER_COMMAND}"
 OWNER_EXISTS = "Perry already has an Owner; there can only be one."
+_ASK_FOR_ANOTHER = "Ask the Owner for a new one."
+INVITE_UNKNOWN = "That Invite code isn't right. Check it, or ask the Owner for a new one."
+INVITE_USED = f"That Invite has already been used. {_ASK_FOR_ANOTHER}"
+INVITE_EXPIRED = f"That Invite has expired. {_ASK_FOR_ANOTHER}"
+INVITE_WITHDRAWN = f"That Invite was withdrawn by the Owner. {_ASK_FOR_ANOTHER}"
 NO_SESSION_SECRET = (
     f"{SESSION_SECRET_VARIABLE} is not set. Add a long random value to .env, e.g. the "
     'output of: uv run python -c "import secrets; print(secrets.token_urlsafe(32))"'
@@ -75,16 +84,28 @@ def create_user(
 ) -> User:
     """A new User. Refused if the username is taken (ignoring case), the password is
     shorter than MIN_PASSWORD_CHARS, or the time zone isn't a known one."""
-    username, display_name = username.strip(), display_name.strip()
-    if not username:
+    _check_new_user(username, password, display_name, time_zone)
+    with db.pool().connection() as conn:
+        return _insert_user(conn, username, password, display_name, time_zone, is_owner)
+
+
+def _check_new_user(username: str, password: str, display_name: str, time_zone: str) -> None:
+    if not username.strip():
         raise Refused("Choose a username.")
     if len(password) < MIN_PASSWORD_CHARS:
         raise Refused(f"The password must be at least {MIN_PASSWORD_CHARS} characters long.")
-    if not display_name:
+    if not display_name.strip():
         raise Refused("Give a display name.")
     _check_time_zone(time_zone)
+
+
+def _insert_user(
+    conn, username: str, password: str, display_name: str, time_zone: str, is_owner=False
+) -> User:
+    """Insert a checked new User on `conn`; a clash rolls back `conn`'s transaction."""
+    username, display_name = username.strip(), display_name.strip()
     try:
-        with db.pool().connection() as conn:
+        with conn.transaction():
             row = conn.execute(
                 "INSERT INTO users (username, password_hash, is_owner, display_name, time_zone) "
                 "VALUES (%s, %s, %s, %s, %s) RETURNING *",
@@ -142,6 +163,89 @@ def authenticate(username: str, password: str) -> User:
     with db.pool().connection() as conn:
         conn.execute("UPDATE users SET last_login_at = now() WHERE id = %s", (row["id"],))
     return _user(row)
+
+
+@dataclass(frozen=True)
+class Invite:
+    """A single-use code from the Owner that lets one person register."""
+
+    code: str
+    created_at: datetime.datetime
+    expires_at: datetime.datetime
+
+
+def create_invite() -> Invite:
+    """A new Invite, valid for INVITE_DAYS. Not tied to a name: the invitee chooses
+    their own username."""
+    created = _now()
+    with db.pool().connection() as conn:
+        row = conn.execute(
+            "INSERT INTO invites (code, created_at, expires_at) VALUES (%s, %s, %s) "
+            "RETURNING *",
+            (secrets.token_urlsafe(9), created, created + INVITE_LIFETIME),
+        ).fetchone()
+    return _invite(row)
+
+
+def open_invites() -> list[Invite]:
+    """The Invites that can still be registered with, soonest to expire first."""
+    with db.pool().connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM invites WHERE used_at IS NULL AND withdrawn_at IS NULL "
+            "AND expires_at > %s ORDER BY expires_at",
+            (_now(),),
+        ).fetchall()
+    return [_invite(row) for row in rows]
+
+
+def withdraw_invite(code: str) -> None:
+    """Cancel an unused Invite, so nobody can register with it. A used one is kept."""
+    with db.pool().connection() as conn:
+        conn.execute(
+            "UPDATE invites SET withdrawn_at = %s "
+            "WHERE code = %s AND used_at IS NULL AND withdrawn_at IS NULL",
+            (_now(), code),
+        )
+
+
+def register(
+    invite: str, username: str, password: str, display_name: str, time_zone: str
+) -> User:
+    """A new User, registered with an Invite, which is then used up. Refused, leaving
+    the Invite as it was, if the Invite is wrong, used, expired or withdrawn, or the
+    User can't be created (see `create_user`)."""
+    _check_new_user(username, password, display_name, time_zone)
+    with db.pool().connection() as conn, conn.transaction():
+        row = conn.execute(
+            "SELECT * FROM invites WHERE code = %s FOR UPDATE", (invite.strip(),)
+        ).fetchone()
+        _check_invite(row)
+        created = _insert_user(conn, username, password, display_name, time_zone)
+        conn.execute(
+            "UPDATE invites SET used_at = %s, used_by = %s WHERE code = %s",
+            (_now(), created.id, row["code"]),
+        )
+    return created
+
+
+def _check_invite(row: dict | None) -> None:
+    if row is None:
+        raise Refused(INVITE_UNKNOWN)
+    if row["used_at"] is not None:
+        raise Refused(INVITE_USED)
+    if row["withdrawn_at"] is not None:
+        raise Refused(INVITE_WITHDRAWN)
+    if row["expires_at"] <= _now():
+        raise Refused(INVITE_EXPIRED)
+
+
+def _invite(row: dict) -> Invite:
+    return Invite(row["code"], row["created_at"], row["expires_at"])
+
+
+def _now() -> datetime.datetime:
+    """The time now. Tests move it to see Invites expire."""
+    return datetime.datetime.now(datetime.UTC)
 
 
 def start_session(user: User) -> str:

@@ -7,16 +7,17 @@ request (see `perry.app.user_of`), never from anything the browser holds.
 """
 
 import html
+from dataclasses import dataclass
 
 import gradio as gr
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from perry import app as chat_ui
-from perry import charts, users
+from perry import charts, owner_panel, pages, users
+from perry.pages import PAGE, SESSION_COOKIE
 
 CHAT_PATH = "/chat"
-SESSION_COOKIE = "perry_session"
 HOST = "127.0.0.1"
 PORT = 7860
 
@@ -55,6 +56,10 @@ def create_app(blocks: gr.Blocks | None = None, *, secure_cookies: bool = False)
             user = users.authenticate(username, password)
         except users.Refused as refused:
             return _login_page(str(refused), username, status_code=401)
+        return logged_in(user)
+
+    def logged_in(user: users.User) -> RedirectResponse:
+        """Into Perry, with a new session for `user`."""
         response = RedirectResponse(f"{CHAT_PATH}/", status_code=303)
         response.set_cookie(
             SESSION_COOKIE,
@@ -66,11 +71,32 @@ def create_app(blocks: gr.Blocks | None = None, *, secure_cookies: bool = False)
         )
         return response
 
+    @served.get("/register", response_class=HTMLResponse)
+    def register_page(invite: str = ""):
+        return _register_page(RegisterForm(invite=invite))
+
+    @served.post("/register")
+    def register(
+        invite: str = Form(""),
+        username: str = Form(""),
+        password: str = Form(""),
+        display_name: str = Form(""),
+        time_zone: str = Form(""),
+    ):
+        form = RegisterForm(invite, username, display_name, time_zone)
+        try:
+            user = users.register(invite, username, password, display_name, time_zone.strip())
+        except users.Refused as refused:
+            return _register_page(form, str(refused), status_code=400)
+        return logged_in(user)
+
     @served.api_route("/logout", methods=["GET", "POST"])
     def log_out():
         response = RedirectResponse("/login", status_code=303)
         response.delete_cookie(SESSION_COOKIE, httponly=True, secure=secure_cookies, samesite="lax")
         return response
+
+    owner_panel.install(served)
 
     return gr.mount_gradio_app(
         served,
@@ -86,32 +112,13 @@ def create_app(blocks: gr.Blocks | None = None, *, secure_cookies: bool = False)
 
 
 def _user(request: Request) -> users.User | None:
-    return users.user_for_session(request.cookies.get(SESSION_COOKIE))
+    return pages.current_user(request)
 
 
 def _gradio_user(request: Request) -> str | None:
     """What Gradio knows the User by (its request's `username`): the User's id."""
     user = _user(request)
     return str(user.id) if user else None
-
-
-PAGE = """<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{title}</title>
-<style>
-  body {{ font-family: system-ui, sans-serif; background: #f6f6f4; color: #1d1d1b;
-         display: flex; justify-content: center; padding: 10vh 16px; margin: 0; }}
-  main {{ background: #fff; padding: 2rem; border-radius: 12px; width: 100%;
-         max-width: 22rem; box-shadow: 0 1px 4px rgba(0,0,0,.08); }}
-  label {{ display: block; margin-top: 1rem; font-size: .9rem; }}
-  input {{ width: 100%; box-sizing: border-box; padding: .55rem; margin-top: .3rem;
-          font-size: 1rem; border: 1px solid #c8c8c4; border-radius: 6px; }}
-  button {{ margin-top: 1.5rem; width: 100%; padding: .65rem; font-size: 1rem;
-           border: 0; border-radius: 6px; background: #2f5d50; color: #fff; cursor: pointer; }}
-  .error {{ color: #a3261b; margin-top: 1rem; }}
-</style></head>
-<body><main>{body}</main></body></html>"""
 
 
 def _login_page(error: str = "", username: str = "", status_code: int = 200) -> HTMLResponse:
@@ -124,8 +131,54 @@ def _login_page(error: str = "", username: str = "", status_code: int = 200) -> 
   <label>Password <input name="password" type="password" autocomplete="current-password"
          required></label>
   <button type="submit">Log in</button>
-</form>"""
+</form>
+<p class="notice">Have an Invite? <a href="/register">Register</a></p>"""
     return HTMLResponse(PAGE.format(title="Log in · Perry", body=body), status_code=status_code)
+
+
+@dataclass(frozen=True)
+class RegisterForm:
+    """What the register page shows filled in (never the password)."""
+
+    invite: str = ""
+    username: str = ""
+    display_name: str = ""
+    time_zone: str = ""
+
+
+REGISTER_NOTICE = (
+    "Perry answers with Google Gemini: your messages are sent to Google and may be logged."
+)
+
+
+def _register_page(form: RegisterForm, error: str = "", status_code: int = 200) -> HTMLResponse:
+    def value(text: str) -> str:
+        return f'value="{html.escape(text)}"'
+
+    body = f"""<h1>Register with Perry</h1>
+<p>You need an Invite from Perry's Owner.</p>
+{pages.error_line(error)}
+<form method="post" action="/register">
+  <label>Invite <input name="invite" required autocomplete="off" {value(form.invite)}></label>
+  <label>Username <input name="username" autocomplete="username" required
+         {value(form.username)}></label>
+  <label>Password (at least {users.MIN_PASSWORD_CHARS} characters)
+    <input name="password" type="password" autocomplete="new-password" required
+           minlength="{users.MIN_PASSWORD_CHARS}"></label>
+  <label>Display name (what Perry calls you)
+    <input name="display_name" autocomplete="name" required {value(form.display_name)}></label>
+  <label>Time zone <input name="time_zone" id="time_zone" required
+         placeholder="e.g. Europe/London" {value(form.time_zone)}></label>
+  <p class="notice">{html.escape(REGISTER_NOTICE)}</p>
+  <button type="submit">Register</button>
+</form>
+<p class="notice">Already registered? <a href="/login">Log in</a></p>
+<script>
+  // Pre-fill the time zone from the browser.
+  const zone = document.getElementById("time_zone");
+  if (!zone.value) zone.value = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+</script>"""
+    return pages.page("Register", body, status_code=status_code)
 
 
 HTTPS_FLAG = "--https"

@@ -74,6 +74,8 @@ Your data lives in the Postgres from `compose.yaml`, in the Docker volume `pgdat
 
 Perry asks you to log in first, even when it runs on your own machine; a login lasts 14 days in that browser. *Log out* is at the top of the sidebar.
 
+To let someone else in, open the **Owner panel** (the link next to your name in the sidebar, or `/owner`) and click *Create an Invite*. Send them the Invite's register link. Each Invite works once and expires after 7 days, and you can withdraw an unused one. On the register page they choose a username, a password (at least 10 characters), a display name and a time zone, and are logged in straight away.
+
 - **Sidebar:** *New thread* and a *Threads* picker to resume an earlier conversation; *Documents* and *Datasets* upload areas (the Datasets list shows each name with its columns); today's usage (`Today: N tokens · $x of $cap`); and *Calendar and email*, where you pick **Test account** or **Real account** and click **Connect Google**.
 - **Chat:** type in the box (the paperclip attaches images). Below it, **Record** is push-to-talk and the player on the right speaks Perry's answer.
 - When Perry needs your approval, a **Confirmation card** appears under the chat with the editable fields, **Approve**, **Reject** and a note box.

@@ -70,8 +70,11 @@ def owner_controls(request: gr.Request) -> list:
 
 
 def logged_in_as(request: gr.Request) -> str:
-    """The sidebar's note on who is logged in."""
-    return f"Logged in as **{user_of(request).profile.display_name}**"
+    """The sidebar's note on who is logged in, with a link to the Owner panel for the
+    Owner."""
+    user = user_of(request)
+    note = f"Logged in as **{user.profile.display_name}**"
+    return f"{note} · [Owner panel](/owner)" if user.is_owner else note
 
 
 # Every field a Write Action can have: (label, lines, editable). The Confirmation card
