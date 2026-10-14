@@ -1,0 +1,5 @@
+#!/bin/sh
+# The repo's checks, shared by the pre-commit and pre-merge-commit hooks.
+set -e
+uv run ruff check .
+uv run pytest -q

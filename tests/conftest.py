@@ -1,6 +1,8 @@
 import base64
+import hashlib
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 import psycopg
 import pymupdf
@@ -9,8 +11,10 @@ from psycopg import sql
 
 # Tests use their own database so they can never touch real Documents.
 ADMIN_URL = "postgresql://perry:perry@127.0.0.1:5433/perry"
-# PERRY_TEST_DB lets parallel checkouts each use their own database.
-TEST_DB = os.environ.get("PERRY_TEST_DB", "perry_test")
+# Each checkout (e.g. a git worktree) gets its own database, so parallel runs never
+# collide. PERRY_TEST_DB overrides the name.
+_CHECKOUT = hashlib.sha1(str(Path(__file__).resolve().parent.parent).lower().encode())
+TEST_DB = os.environ.get("PERRY_TEST_DB") or f"perry_test_{_CHECKOUT.hexdigest()[:8]}"
 TEST_URL = f"postgresql://perry:perry@127.0.0.1:5433/{TEST_DB}"
 os.environ["DATABASE_URL"] = TEST_URL
 # Set before perry loads .env (which never overrides), so tests never trace to LangSmith.
@@ -23,6 +27,10 @@ os.environ["PERRY_PICKING_MODE"] = "logical"
 # No real ColBERT model (torch, and an index in the real app-data folder) unless a test
 # asks for one; tests that need ColBERT use the fake encoder.
 os.environ["PERRY_COLBERT_MODEL"] = ""
+# Placeholder keys, so no test spends real quota and the suite runs where there is no
+# .env (CI, a fresh worktree). Tests that need the paid fallback set its key themselves.
+os.environ["GOOGLE_API_KEY"] = "test-google-key"
+os.environ["OPENAI_API_KEY"] = ""
 # Sessions are signed with this; the served app refuses to start without one.
 os.environ["PERRY_SESSION_SECRET"] = "test-session-secret"
 
@@ -47,6 +55,8 @@ def database():
             if not exists:
                 conn.execute(f'CREATE DATABASE "{TEST_DB}"')
     except psycopg.OperationalError:
+        if os.environ.get("CI"):  # in CI a skipped DB test would pass silently
+            raise
         pytest.skip("Postgres not running: start it with `docker compose up -d`")
 
     from perry import db
