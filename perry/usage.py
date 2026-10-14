@@ -22,9 +22,10 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, tzinfo
 from pathlib import Path
 from typing import TYPE_CHECKING
+from zoneinfo import ZoneInfo
 
 from perry import db
 
@@ -51,6 +52,7 @@ class Turn:
     thread_id: str | None
     id: str
     user_id: int | None = None
+    time_zone: str | None = None  # the User's Profile time zone
 
 
 class DailyCapReached(Exception):
@@ -82,7 +84,12 @@ def turn(
     """Attribute every model call in this block to `user`'s Turn `turn_id` (by default a
     new one) on `thread_id`. Re-entering a Turn (e.g. after its Confirmation) keeps adding
     to its token ceiling."""
-    current = Turn(thread_id, turn_id or new_turn_id(), user.id if user else None)
+    current = Turn(
+        thread_id,
+        turn_id or new_turn_id(),
+        user.id if user else None,
+        user.profile.time_zone if user else None,
+    )
     token = _current.set(current)
     try:
         yield current
@@ -96,6 +103,20 @@ def new_turn_id() -> str:
 
 def current_turn() -> Turn | None:
     return _current.get()
+
+
+def local_zone() -> tzinfo:
+    """The time zone "today" means: the current Turn's User's (from their Profile), or
+    outside a Turn this machine's."""
+    current = current_turn()
+    if current is not None and current.time_zone:
+        return ZoneInfo(current.time_zone)
+    return datetime.now().astimezone().tzinfo
+
+
+def local_now() -> datetime:
+    """The time now in `local_zone()`."""
+    return datetime.now(local_zone())
 
 
 def turn_token_ceiling() -> int:

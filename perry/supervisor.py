@@ -146,10 +146,19 @@ def _checkpointer() -> PostgresSaver:
     return checkpointer
 
 
-def supervisor(user: User | None = None):
-    """The Supervisor for `user`'s Turns: only the Owner's has the Task Agent. With no
-    `user` it is the Owner's, for reading a Thread's state (which the tools don't change)."""
-    owner = user is None or user.is_owner
+def supervisor(user: User):
+    """The Supervisor for `user`'s Turns: only the Owner's has the Task Agent."""
+    return _build(owner=user.is_owner)
+
+
+def _state_reader():
+    """A graph for reading a Thread's checkpointed state (history, a pending
+    Confirmation, the Agents consulted), never for running a Turn. It is built like a
+    non-Owner's Supervisor, so it can't fall back to the Owner's tools."""
+    return _build(owner=False)
+
+
+def _build(*, owner: bool):
     # Built per call (cheap) so it always uses the current model provider.
     return create_agent(
         models.chat_model(),
@@ -330,7 +339,7 @@ def resume_turn(user: User, thread_id: str, decision: Decision) -> TurnResult:
 
 def pending_confirmation(thread_id: str) -> Confirmation | None:
     """The Confirmation the Thread is waiting for, if any."""
-    interrupts = supervisor().get_state(_config(thread_id)).interrupts
+    interrupts = _state_reader().get_state(_config(thread_id)).interrupts
     return _confirmation(interrupts[0].value) if interrupts else None
 
 
@@ -397,7 +406,7 @@ def agent_results(messages: list) -> list[ToolMessage]:
 
 def agents_consulted(thread_id: str) -> list[str]:
     """The Agent tools the Supervisor called during the Thread's latest Turn, in order."""
-    messages = supervisor().get_state(_config(thread_id)).values.get("messages", [])
+    messages = _state_reader().get_state(_config(thread_id)).values.get("messages", [])
     return [m.name for m in agent_results(messages)]
 
 
@@ -508,7 +517,7 @@ def _stop_at_ceiling(run: _TurnRun, ceiling: usage.TurnTokenCeilingReached) -> s
 
 def thread_history(thread_id: str) -> list[dict]:
     """The Thread as user/assistant messages, without the Agent calls in between."""
-    state = supervisor().get_state(_config(thread_id))
+    state = _state_reader().get_state(_config(thread_id))
     history, turn = [], []
     for msg in state.values.get("messages", []):
         turn.append(msg)

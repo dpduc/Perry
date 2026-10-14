@@ -95,3 +95,51 @@ def test_a_turn_resumed_after_a_confirmation_still_gets_the_profile(perry, works
     perry.resume(Approve())
 
     assert "Olive Owner" in supervisor_prompt(perry, -1)
+
+
+# The Agents work out "today" in the User's time zone too. At any moment these two time
+# zones are on different dates, so one of them is always not this machine's date.
+APART = ("Pacific/Kiritimati", "Pacific/Pago_Pago")
+
+
+def prompt_text(messages) -> str:
+    return "\n".join(message.text for message in messages)
+
+
+def test_the_task_agent_knows_today_in_the_users_time_zone(perry, owner, workspace):
+    from perry import users
+
+    for zone in APART:
+        perry.user = users.update_profile(owner, "Olive Owner", zone)
+        perry.thread_id = None
+        perry.script(
+            call("ask_task_agent", request="What's on my calendar today?"),  # Supervisor
+            "Nothing is on today.",  # Task Agent
+            last_message,  # Supervisor
+        )
+
+        perry.send("What's on today?")
+
+        task_agents_prompt = prompt_text(perry.model.calls[-2])
+        assert local_today(zone) in task_agents_prompt, zone
+
+
+def test_self_query_knows_today_in_the_users_time_zone(perry):
+    from perry import users
+
+    perry.add_document("budget.md", "The marketing budget for Q3 is 40,000 dollars.")
+    for zone in APART:
+        perry.user = users.update_profile(perry.user, "Olive Owner", zone)
+        perry.thread_id = None
+        perry.script(
+            call("ask_knowledge_agent", question="What is the marketing budget?"),
+            call("self_query", question="marketing budget"),  # Knowledge Agent
+            '{"query": "marketing budget"}',  # Self-query's model call: no filter
+            last_message,  # Knowledge Agent
+            last_message,  # Supervisor
+        )
+
+        perry.send("What's my marketing budget?", technique="self_query")
+
+        self_query_prompt = prompt_text(perry.model.calls[-3])
+        assert f"Today is {local_today(zone)}" in self_query_prompt, zone

@@ -91,3 +91,12 @@ def test_the_owners_turns_still_reach_the_task_agent(perry, owners_mail):
     assert "aren't available" not in seen["prompt"]
     assert perry.consulted() == ["ask_task_agent"]
     assert "Friday" in reply
+
+
+def test_a_supervisor_cant_be_built_without_knowing_whose_turn_it_is(database):
+    """No default to the Owner's tools: forgetting the User fails, rather than giving
+    the Task Agent to whoever's Turn it is."""
+    from perry import supervisor
+
+    with pytest.raises(TypeError):
+        supervisor.supervisor()

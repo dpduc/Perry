@@ -17,7 +17,7 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import HumanInTheLoopMiddleware, InterruptOnConfig
 from langchain_core.tools import BaseTool, tool
 
-from perry import models, privacy, retries, workspace
+from perry import models, privacy, retries, usage, workspace
 from perry.workspace import Email, Event
 
 SYSTEM_PROMPT = """You are Perry's Task Agent. You look things up in the user's \
@@ -42,7 +42,8 @@ and the user's note, so the request can be revised.
 
 
 def _local_day_start(day: str) -> datetime:
-    return datetime.combine(date.fromisoformat(day), time()).astimezone()
+    """Midnight starting `day`, in the User's time zone."""
+    return datetime.combine(date.fromisoformat(day), time(), tzinfo=usage.local_zone())
 
 
 def _format_event(event: Event) -> str:
@@ -105,8 +106,10 @@ def _addresses(text: str) -> tuple[str, ...]:
 
 
 def _when(text: str) -> datetime:
-    """A local date and time like 2026-10-09T14:30 (an explicit offset is kept)."""
-    return datetime.fromisoformat(text).astimezone()
+    """A date and time like 2026-10-09T14:30 in the User's time zone (an explicit offset
+    is kept)."""
+    moment = datetime.fromisoformat(text)
+    return moment if moment.tzinfo else moment.replace(tzinfo=usage.local_zone())
 
 
 def write_action(describe: Callable[..., str]) -> Callable[[Callable[..., str]], BaseTool]:
@@ -244,8 +247,9 @@ def _confirmation_gate() -> HumanInTheLoopMiddleware:
 
 
 def task_agent():
-    # Built per call (cheap) so it always uses the current model provider and today's date.
-    now = datetime.now().astimezone()
+    # Built per call (cheap) so it always uses the current model provider and today's
+    # date, in the time zone of the User whose Turn it is.
+    now = usage.local_now()
     return create_agent(
         models.chat_model(),
         tools=[*READ_ACTIONS, *WRITE_ACTIONS],
