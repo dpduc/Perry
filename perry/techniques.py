@@ -18,10 +18,12 @@ from itertools import zip_longest
 from langchain_core.runnables import Runnable, chain
 
 from perry import colbert as colbert_index
-from perry import models, summaries
+from perry import models, summaries, usage
 from perry.search import (
+    FINDINGS,
     RRF_K,
     SearchHit,
+    default_limit,
     document_count,
     hybrid_search,
     summary_search,
@@ -119,8 +121,6 @@ one per line, with no numbering or comments.
 
 Question: {question}"""
 REWRITES = 3
-# How many Chunks RAG fusion keeps: as many as one hybrid search returns by default.
-FUSED_LIMIT = 6
 
 
 @chain
@@ -154,7 +154,7 @@ def rag_fusion(question: str) -> list[SearchHit]:
             key = _key(hit)
             first.setdefault(key, hit)
             scores[key] = scores.get(key, 0.0) + 1.0 / (RRF_K + rank)
-    ranked = sorted(scores, key=scores.__getitem__, reverse=True)[:FUSED_LIMIT]
+    ranked = sorted(scores, key=scores.__getitem__, reverse=True)[: default_limit()]
     return [replace(first[key], score=scores[key]) for key in ranked]
 
 
@@ -440,3 +440,31 @@ def get(name: str) -> Technique:
         if technique.name == name:
             return technique
     raise KeyError(f"No Retrieval Technique {name!r}; known: {[t.name for t in TECHNIQUES]}")
+
+
+@dataclass(frozen=True)
+class Found:
+    """What one search found: the Chunks for the Knowledge Agent, and whether the
+    reranker chose and ordered them."""
+
+    hits: list[SearchHit]
+    reranked: bool = False
+    problem: str = ""  # why the Chunks weren't reranked, if reranking failed
+
+
+def search(technique: Technique, question: str) -> Found:
+    """Search with `technique`, then, if there is a reranker, keep the FINDINGS Chunks it
+    scores best against the question, best first. The technique gathers a wider pool of
+    candidates for it to choose from (`search.default_limit`). Without a reranker, the
+    technique's own Chunks, as they came; if reranking fails, its best FINDINGS."""
+    hits = technique.chain.invoke(question)
+    if not hits or not models.reranking_supported():
+        return Found(hits)
+    try:
+        scores = models.rerank(question, [hit.text for hit in hits])
+    except usage.TurnTokenCeilingReached:
+        raise  # the Turn stops: not a reranker failure
+    except Exception as error:  # noqa: BLE001 - the technique's own order still answers
+        return Found(hits[:FINDINGS], problem=f"Reranking failed ({error})")
+    ranked = sorted(zip(scores, hits, strict=True), key=lambda pair: pair[0], reverse=True)
+    return Found([hit for _, hit in ranked[:FINDINGS]], reranked=True)

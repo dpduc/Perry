@@ -217,6 +217,16 @@ class FakeColbert:
         return np.stack(rows).astype(np.float32)
 
 
+class FakeReranker:
+    """A deterministic reranker: a text scores the number of the question's words in it."""
+
+    model = "fake-reranker"
+
+    def score(self, question: str, texts: list[str]) -> list[float]:
+        words = set(re.findall(r"\w+", question.lower()))
+        return [float(len(words & set(re.findall(r"\w+", text.lower())))) for text in texts]
+
+
 def fake_provider(
     chat: ScriptedChatModel,
     *,
@@ -225,10 +235,12 @@ def fake_provider(
     vision: FakeVision | None = None,
     summary: FakeSummaryModel | None = None,
     colbert: FakeColbert | None = None,
+    reranker: FakeReranker | None = None,
 ) -> Provider:
     """Fake models; `local=True` makes text generation count as local (for privacy checks).
     Only with a `summary` model can the provider write Summaries. Without `colbert`,
-    ingestion leaves the ColBERT index alone (and skips loading torch)."""
+    ingestion leaves the ColBERT index alone (and skips loading torch). Without
+    `reranker`, searches aren't reranked."""
     vision = vision or FakeVision()
     return Provider(
         chat_model=lambda: chat,
@@ -243,4 +255,5 @@ def fake_provider(
         summary_model=(lambda: summary) if summary else None,
         summary_model_name=summary.model if summary else "unknown",
         colbert=colbert,
+        reranker=reranker,
     )

@@ -90,6 +90,11 @@ SUMMARY_CONTEXT_TOKENS = int(os.getenv("PERRY_SUMMARY_CONTEXT_TOKENS", "8192"))
 # Changing it re-encodes every Chunk when Perry next starts. Empty turns ColBERT off.
 DEFAULT_COLBERT_MODEL = "answerdotai/answerai-colbert-small-v1"
 COLBERT_MODEL = os.getenv("PERRY_COLBERT_MODEL", DEFAULT_COLBERT_MODEL).strip()
+# The local cross-encoder that reranks every Retrieval Technique's Chunks. Empty turns
+# reranking off. For Documents not in English, try BAAI/bge-reranker-v2-m3 (multilingual,
+# slower on a CPU).
+DEFAULT_RERANK_MODEL = "cross-encoder/ms-marco-MiniLM-L6-v2"
+RERANK_MODEL = os.getenv("PERRY_RERANK_MODEL", DEFAULT_RERANK_MODEL).strip()
 
 # nomic-embed-text's size. pgvector's HNSW index supports at most 2000 dimensions.
 # Changing it resizes the columns and re-embeds everything (perry.reembed).
@@ -152,6 +157,33 @@ class LocalColbert:
         return pylate_models.ColBERT(self.model, device="cpu", document_length=512)
 
 
+class Reranker(Protocol):
+    """Scores how well each text answers a question, reading the two together."""
+
+    model: str  # the name the usage ledger records (and prices) its calls by
+
+    def score(self, question: str, texts: list[str]) -> list[float]: ...
+
+
+class LocalReranker:
+    """A cross-encoder run on this machine's CPU with sentence-transformers. Loaded on
+    first use: importing torch takes tens of seconds, and the first use downloads it."""
+
+    def __init__(self, model: str = DEFAULT_RERANK_MODEL):
+        self.model = model
+
+    def score(self, question: str, texts: list[str]) -> list[float]:
+        pairs = [(question, text) for text in texts]
+        return [float(s) for s in self._loaded.predict(pairs, show_progress_bar=False)]
+
+    @cached_property
+    def _loaded(self):
+        os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+        from sentence_transformers import CrossEncoder
+
+        return CrossEncoder(self.model, device="cpu", max_length=512)
+
+
 class SpeechUnavailable(Exception):
     """The current model provider can't transcribe or synthesise speech."""
 
@@ -190,6 +222,8 @@ class Provider:
     # The ColBERT encoder, if there is one. Without it, ingestion leaves the ColBERT
     # index alone and the ColBERT Retrieval Technique finds nothing.
     colbert: ColbertEncoder | None = None
+    # The reranker, if there is one. Without it, searches keep their technique's order.
+    reranker: Reranker | None = None
 
 
 class FreeQuota:
@@ -353,6 +387,7 @@ def _default() -> Provider:
         summary_model=_ollama_summary_model,
         summary_model_name=SUMMARY_MODEL,
         colbert=LocalColbert(COLBERT_MODEL) if COLBERT_MODEL else None,
+        reranker=LocalReranker(RERANK_MODEL) if RERANK_MODEL else None,
     )
 
 
@@ -606,6 +641,11 @@ def vision_model() -> str:
     return _provider().vision_model
 
 
+def reranking_supported() -> bool:
+    """Whether the current provider has a reranker."""
+    return _provider().reranker is not None
+
+
 def colbert_supported() -> bool:
     """Whether the current provider has a ColBERT encoder."""
     return _provider().colbert is not None
@@ -642,6 +682,22 @@ def _record_colbert(texts: list[str]) -> None:
 
     usage.check_turn_ceiling()
     usage.record("colbert", colbert_model(), estimate_tokens(texts))
+
+
+def rerank(question: str, texts: list[str]) -> list[float]:
+    """How well each of `texts` answers `question`, by the provider's reranker (higher
+    is better). Raises RuntimeError if the provider has none."""
+    reranker = _provider().reranker
+    if reranker is None:
+        raise RuntimeError("This model provider has no reranker.")
+    from perry import usage
+
+    usage.check_turn_ceiling()
+    # Local and free, but every model call is in the ledger. The question is read once
+    # with each text.
+    tokens = estimate_tokens([f"{question} {text}" for text in texts])
+    usage.record("rerank", reranker.model, tokens)
+    return reranker.score(question, texts)
 
 
 # What transcribing one scanned page is expected to cost, for estimates made before

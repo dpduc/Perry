@@ -12,6 +12,16 @@ from perry.documents import citation
 CANDIDATES = 20
 # Standard RRF constant: dampens the advantage of the very top ranks.
 RRF_K = 60
+# How many Chunks a search hands the Knowledge Agent, and how many candidates it
+# gathers instead when a reranker will pick those few from them.
+FINDINGS = 6
+RERANK_POOL = 20
+
+
+def default_limit() -> int:
+    """How many Chunks a search returns unless told otherwise: the reranker's pool
+    when there is a reranker, else the findings themselves."""
+    return RERANK_POOL if models.reranking_supported() else FINDINGS
 
 HYBRID_SQL = """
 WITH vector_hits AS (
@@ -160,7 +170,7 @@ def _like_escape(text: str) -> str:
 
 def hybrid_search(
     query: str,
-    limit: int = 6,
+    limit: int | None = None,
     *,
     embed=models.embed_query,
     where: DocumentFilter | None = None,
@@ -172,7 +182,7 @@ def hybrid_search(
         "query": query,
         "candidates": CANDIDATES,
         "rrf_k": RRF_K,
-        "limit": limit,
+        "limit": limit or default_limit(),
     }
     conditions, filter_params = where.sql() if where else ([], {})
     params.update(filter_params)
@@ -227,7 +237,11 @@ LIMIT %(limit)s
 
 
 def summary_search(
-    query: str, limit: int = 6, *, kind: str = summaries.DOCUMENT, embed=models.embed_query
+    query: str,
+    limit: int | None = None,
+    *,
+    kind: str = summaries.DOCUMENT,
+    embed=models.embed_query,
 ) -> list[SearchHit]:
     """The Chunks beneath the Summaries of `kind` that best match `query`: the best
     Chunks under the best-matching Summary first. A Summary is never returned itself,
@@ -239,7 +253,7 @@ def summary_search(
         "kind": kind,
         "summaries": SUMMARY_CANDIDATES,
         "per_summary": CHUNKS_PER_SUMMARY,
-        "limit": limit,
+        "limit": limit or default_limit(),
     }
     with db.pool().connection() as conn:
         sql = SUMMARY_SQL.format(status=summaries.STATUS_COLUMN[kind])

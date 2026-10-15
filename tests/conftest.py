@@ -27,6 +27,8 @@ os.environ["PERRY_PICKING_MODE"] = "logical"
 # No real ColBERT model (torch, and an index in the real app-data folder) unless a test
 # asks for one; tests that need ColBERT use the fake encoder.
 os.environ["PERRY_COLBERT_MODEL"] = ""
+# No real reranker either; tests that rerank use the fake one.
+os.environ["PERRY_RERANK_MODEL"] = ""
 # Placeholder keys, so no test spends real quota and the suite runs where there is no
 # .env (CI, a fresh worktree). Tests that need the paid fallback set its key themselves.
 os.environ["GOOGLE_API_KEY"] = "test-google-key"

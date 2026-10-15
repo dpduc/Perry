@@ -41,6 +41,7 @@ class _Search:
     def __init__(self):
         self.answering: Technique | None = None  # the technique that found Chunks
         self.last: Technique | None = None  # the technique the latest search used
+        self.found: techniques.Found | None = None  # what the answering search found
 
 
 def technique_tool(technique: Technique, search: _Search | None = None) -> BaseTool:
@@ -51,11 +52,12 @@ def technique_tool(technique: Technique, search: _Search | None = None) -> BaseT
 
     def run(question: str) -> str:
         used = search.answering or technique
-        hits = used.chain.invoke(question)
+        result = techniques.search(used, question)
+        hits = result.hits
         search.last = used
         if not hits:
             return techniques.nothing_found(used, hits)
-        search.answering = used
+        search.answering, search.found = used, result
         found = "\n\n".join(f"[{hit.citation}]\n{hit.text}" for hit in hits)
         if used is not technique:
             found = (
@@ -110,8 +112,17 @@ def find(
     result = agent.invoke({"messages": [{"role": "user", "content": question}]})
     # The technique that found the Chunks or, if none did, the one that searched last.
     used = search.answering or search.last
-    found_with = (f"{used.label} ({how})",) if used else ()
+    found_with = (f"{used.label}{_reranking(search.found)} ({how})",) if used else ()
     return Findings(result["messages"][-1].text, found_with)
+
+
+def _reranking(found: techniques.Found | None) -> str:
+    """What the Found-with line says after the technique about reranking its Chunks."""
+    if found is None:
+        return ""
+    if found.reranked:
+        return ", reranked"
+    return ", reranking failed" if found.problem else ""
 
 
 def ask(question: str, forced: str | None = None) -> str:
