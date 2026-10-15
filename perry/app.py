@@ -21,18 +21,9 @@ from perry import (
     threads,
     usage,
     users,
-    voice,
     workspace,
 )
-from perry.supervisor import (
-    Approve,
-    Confirmation,
-    Reject,
-    pending_confirmation,
-    resume_turn,
-    run_turn,
-    thread_history,
-)
+from perry.supervisor import Confirmation
 
 EMPTY = {"text": "", "files": []}
 
@@ -58,11 +49,13 @@ def user_of(request: gr.Request | None) -> users.User:
     return user
 
 
-def own_thread(user: users.User, thread_id: str | None) -> None:
-    """Refuse (as if it didn't exist) a Thread that isn't `user`'s. None, a Thread not
-    started yet, is fine."""
-    if thread_id is not None and not threads.belongs_to(thread_id, user):
-        raise gr.Error(str(threads.ThreadNotFound()))
+def thread_of(request: gr.Request | None, thread_id: str | None) -> threads.Thread:
+    """The request's User's Thread `thread_id` (None: one not started yet). Another
+    User's Thread is refused as if it didn't exist."""
+    try:
+        return threads.open(user_of(request), thread_id)
+    except threads.ThreadNotFound as missing:
+        raise gr.Error(str(missing)) from None
 
 
 OWNER_ONLY = "Only the Owner can do that."
@@ -135,23 +128,21 @@ def answer(
     history: list[dict],
     thread_id: str | None,
     technique: str = AUTO,
-    voice_turn: str | None = None,
+    heard: threads.Heard | None = None,
 ):
-    """Run the Turn (`voice_turn` when the request came by voice), forcing `technique`
-    unless it is Auto. Outputs: chat, Thread, Thread picker, then `show()`'s card outputs."""
-    user = user_of(request)
-    own_thread(user, thread_id)
+    """Run the Turn (the one `heard` began, when the request came by voice), forcing
+    `technique` unless it is Auto. Outputs: chat, Thread, Thread picker, then `show()`'s
+    card outputs."""
+    thread = thread_of(request, thread_id)
     text, images = message.get("text", ""), message.get("files", [])
     if not text.strip() and not images:
         return history, thread_id, gr.skip(), *[gr.skip() for _ in confirmation_card(None)]
-    if thread_id is None:
-        thread_id = threads.create(user, text)
     # A pending Confirmation is cancelled by this message; the reply says so.
     forced = None if technique in (None, AUTO) else technique
-    outcome = run_turn(user, thread_id, text, images=images, turn_id=voice_turn, technique=forced)
+    outcome = thread.send(heard or text, images=images, technique=forced)
     history, *card = show(outcome, history)
-    picker = gr.update(choices=threads.list_recent(user), value=thread_id)
-    return history, thread_id, picker, *card
+    picker = gr.update(choices=threads.list_recent(thread.user), value=thread.id)
+    return history, thread.id, picker, *card
 
 
 def show(outcome: str | Confirmation, history: list[dict]):
@@ -185,16 +176,15 @@ def approve(
     *values,
 ):
     """Approve the waiting Write Action with the card's fields (edited or not)."""
-    user = user_of(request)
-    own_thread(user, thread_id)
-    if thread_id is None or waiting is None:
+    thread = thread_of(request, thread_id)
+    if waiting is None:
         return history, *confirmation_card(None)
     edits = {
         name: value
         for name, value in zip(CARD_FIELDS, values, strict=True)
         if name in waiting.fields
     }
-    return show(resume_turn(user, thread_id, Approve(edits)), history)
+    return show(thread.approve(edits), history)
 
 
 def reject(
@@ -205,52 +195,51 @@ def reject(
     note: str,
 ):
     """Reject the waiting Write Action; the note goes to Perry to revise."""
-    user = user_of(request)
-    own_thread(user, thread_id)
-    if thread_id is None or waiting is None:
+    thread = thread_of(request, thread_id)
+    if waiting is None:
         return history, *confirmation_card(None)
     shown = f"Rejected: {note}" if note.strip() else "Rejected."
     history = [*history, {"role": "user", "content": shown}]
-    return show(resume_turn(user, thread_id, Reject(note.strip())), history)
+    return show(thread.reject(note), history)
 
 
 def hear(
     request: gr.Request, recording: str | None, history: list[dict], thread_id: str | None
 ):
     """Push-to-talk: transcribe the recording and show it as the user's message.
-    Outputs: message, chat, recorder, and the voice Turn (None if nothing is sent)."""
-    user = user_of(request)
-    own_thread(user, thread_id)
+    Outputs: message, chat, recorder, and what was Heard (None if nothing is sent)."""
+    thread = thread_of(request, thread_id)
     if not recording:
         return gr.skip(), history, None, None
-    turn_id = voice.new_turn()
     try:
-        transcript = voice.transcribe(user, Path(recording).read_bytes(), thread_id, turn_id)
+        heard = thread.hear(Path(recording).read_bytes())
     except usage.DailyCapReached as refused:
         return EMPTY, [*history, {"role": "assistant", "content": str(refused)}], None, None
     except Exception as error:  # noqa: BLE001 - tell the user, keep the UI usable
         gr.Warning(f"Couldn't transcribe the recording: {error}")
         return EMPTY, history, None, None
-    if not transcript.strip():
+    if not heard.transcript.strip():
         gr.Warning("I didn't catch anything. Hold the button and speak, then release.")
         return EMPTY, history, None, None
-    message = {"text": transcript, "files": []}
-    return message, [*history, {"role": "user", "content": transcript}], None, turn_id
+    message = {"text": heard.transcript, "files": []}
+    return message, [*history, {"role": "user", "content": heard.transcript}], None, heard
 
 
 def read_aloud(
-    request: gr.Request, turn_id: str | None, history: list[dict], thread_id: str | None
+    request: gr.Request,
+    heard: threads.Heard | None,
+    history: list[dict],
+    thread_id: str | None,
 ):
-    """Speak the latest answer, only when the request came by voice (as Turn `turn_id`)."""
-    user = user_of(request)
-    own_thread(user, thread_id)
-    if turn_id is None or not history or history[-1]["role"] != "assistant":
+    """Speak the latest answer, only when the request came by voice (as `heard`)."""
+    thread = thread_of(request, thread_id)
+    if heard is None or not history or history[-1]["role"] != "assistant":
         return None
     text = _text(history[-1]["content"])
     if not text:
         return None
     try:
-        speech = voice.read_aloud(user, text, thread_id, turn_id)
+        speech = thread.read_aloud(heard, text)
     except Exception as error:  # noqa: BLE001 - the text answer is already shown
         gr.Warning(f"Couldn't read the answer aloud: {error}")
         return None
@@ -270,13 +259,16 @@ def _text(content) -> str:
 
 def open_thread(request: gr.Request, thread_id: str | None):
     """Show the Thread. Another User's Thread opens as if it didn't exist."""
-    if not thread_id or not threads.belongs_to(thread_id, user_of(request)):
-        return [], None, *confirmation_card(None)
+    user = user_of(request)
+    try:
+        thread = threads.open(user, thread_id or None)
+    except threads.ThreadNotFound:
+        thread = threads.open(user, None)
     history = []
-    for message in thread_history(thread_id):
+    for message in thread.history():
         is_answer = message["role"] == "assistant"
         history += charts.chat_messages(message["content"]) if is_answer else [message]
-    return history, thread_id, *confirmation_card(pending_confirmation(thread_id))
+    return history, thread.id, *confirmation_card(thread.pending_confirmation())
 
 
 def new_thread():
@@ -408,7 +400,7 @@ def build(privacy_notice: str = "") -> gr.Blocks:
     with gr.Blocks(title="Perry") as demo:
         thread_id = gr.State(None)
         pending = gr.State(EMPTY)
-        voice_turn = gr.State(None)  # the Turn id when the latest request came by voice
+        heard = gr.State(None)  # the latest request, when it came by voice
 
         with gr.Sidebar():
             gr.Markdown("## Perry")
@@ -504,12 +496,12 @@ def build(privacy_notice: str = "") -> gr.Blocks:
             .then(show_user_message, [box, chatbot], [pending, chatbot, box])
             .then(answer, [pending, chatbot, thread_id, technique], answer_outputs)
         )
-        box.submit(lambda: None, None, voice_turn)
+        box.submit(lambda: None, None, heard)
         during_turn(
             mic.stop_recording(lock_threads, None, switching)
-            .then(hear, [mic, chatbot, thread_id], [pending, chatbot, mic, voice_turn])
-            .then(answer, [pending, chatbot, thread_id, technique, voice_turn], answer_outputs)
-            .then(read_aloud, [voice_turn, chatbot, thread_id], speaker)
+            .then(hear, [mic, chatbot, thread_id], [pending, chatbot, mic, heard])
+            .then(answer, [pending, chatbot, thread_id, technique, heard], answer_outputs)
+            .then(read_aloud, [heard, chatbot, thread_id], speaker)
         )
         during_turn(
             approve_button.click(lock_threads, None, switching).then(
