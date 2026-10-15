@@ -69,11 +69,12 @@ def test_a_turn_on_another_users_thread_is_refused_and_leaves_it_untouched(perry
     perry.script("Hi Olive!")
     perry.send("Hello there")
     before = perry.history()
-    perry.user = sam
+    owner, perry.user = perry.user, sam
 
     with pytest.raises(threads.ThreadNotFound):
         perry.send("What did Olive ask?")
 
+    perry.user = owner
     assert perry.history() == before
     assert len(perry.model.calls) == 1  # only the Owner's Turn called the model
 
@@ -145,7 +146,7 @@ def test_voice_on_another_users_thread_is_refused_before_transcribing(perry, sam
 
 
 def test_reading_aloud_on_another_users_thread_is_refused(perry, sam):
-    from perry import app, usage, voice
+    from perry import app, threads, usage
 
     perry.script("Hi Olive!")
     perry.send("Hello there")
@@ -153,7 +154,7 @@ def test_reading_aloud_on_another_users_thread_is_refused(perry, sam):
     answered = [{"role": "assistant", "content": "Hi Olive!"}]
 
     with pytest.raises(gr.Error, match="doesn't exist"):
-        app.read_aloud(request_as(sam), voice.new_turn(), answered, perry.thread_id)
+        app.read_aloud(request_as(sam), threads.Heard("Hi", "t1"), answered, perry.thread_id)
 
     assert usage.today().tokens == used  # no text-to-speech call was made
 

@@ -127,6 +127,7 @@ def _run_container(tag: str, code: str, workdir: Path, time_limit_s: float) -> _
         "--read-only", "--tmpfs", "/tmp:size=64m",
         "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
         "--mount", f"type=bind,source={workdir},target=/work",
+        *_as_host_user(),
         tag,
     ]  # fmt: skip
     try:
@@ -141,6 +142,15 @@ def _run_container(tag: str, code: str, workdir: Path, time_limit_s: float) -> _
         return _Finished(output, f"The script ran out of memory (limit {MEMORY_LIMIT}) and was stopped.")
     stderr = _text(done.stderr).strip() or f"exit code {done.returncode}"
     return _Finished(output, f"The script failed:\n{stderr}")
+
+
+def _as_host_user() -> list[str]:
+    """On Linux the work dir is private to the host user (mkdtemp makes it 0700), so the
+    container runs as that user to read and write it. Docker Desktop on Windows maps
+    file ownership itself, so there the image's own non-root user is used. A root host
+    user keeps the image's user too, so the script never runs as root."""
+    uid = getattr(os, "getuid", lambda: 0)()
+    return ["--user", f"{uid}:{os.getgid()}"] if uid else []
 
 
 def _collect(finished: _Finished, workdir: Path, inputs: set[str]) -> Result:

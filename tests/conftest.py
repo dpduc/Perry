@@ -1,6 +1,8 @@
 import base64
+import hashlib
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 import psycopg
 import pymupdf
@@ -9,8 +11,10 @@ from psycopg import sql
 
 # Tests use their own database so they can never touch real Documents.
 ADMIN_URL = "postgresql://perry:perry@127.0.0.1:5433/perry"
-# PERRY_TEST_DB lets parallel checkouts each use their own database.
-TEST_DB = os.environ.get("PERRY_TEST_DB", "perry_test")
+# Each checkout (e.g. a git worktree) gets its own database, so parallel runs never
+# collide. PERRY_TEST_DB overrides the name.
+_CHECKOUT = hashlib.sha1(str(Path(__file__).resolve().parent.parent).lower().encode())
+TEST_DB = os.environ.get("PERRY_TEST_DB") or f"perry_test_{_CHECKOUT.hexdigest()[:8]}"
 TEST_URL = f"postgresql://perry:perry@127.0.0.1:5433/{TEST_DB}"
 os.environ["DATABASE_URL"] = TEST_URL
 # Set before perry loads .env (which never overrides), so tests never trace to LangSmith.
@@ -23,6 +27,10 @@ os.environ["PERRY_PICKING_MODE"] = "logical"
 # No real ColBERT model (torch, and an index in the real app-data folder) unless a test
 # asks for one; tests that need ColBERT use the fake encoder.
 os.environ["PERRY_COLBERT_MODEL"] = ""
+# Placeholder keys, so no test spends real quota and the suite runs where there is no
+# .env (CI, a fresh worktree). Tests that need the paid fallback set its key themselves.
+os.environ["GOOGLE_API_KEY"] = "test-google-key"
+os.environ["OPENAI_API_KEY"] = ""
 # Sessions are signed with this; the served app refuses to start without one.
 os.environ["PERRY_SESSION_SECRET"] = "test-session-secret"
 
@@ -47,6 +55,8 @@ def database():
             if not exists:
                 conn.execute(f'CREATE DATABASE "{TEST_DB}"')
     except psycopg.OperationalError:
+        if os.environ.get("CI"):  # in CI a skipped DB test would pass silently
+            raise
         pytest.skip("Postgres not running: start it with `docker compose up -d`")
 
     from perry import db
@@ -151,43 +161,46 @@ class Perry:
         path.write_text(text, encoding="utf-8")
         ingest_file(path, embed=fake_embed)
 
+    def thread(self):
+        """The Thread being driven, opened as the chat UI opens it on each request."""
+        from perry import threads
+
+        return threads.open(self.user, self.thread_id)
+
     def send(self, message: str, images=(), technique: str | None = None) -> str:
         """Run one Turn and return the reply the user sees. `images` are image files
         attached to the message, as when dropped into the chat; `technique` forces a
         Retrieval Technique, as the sidebar dropdown does."""
-        from perry import supervisor, threads
-
-        if self.thread_id is None:
-            self.thread_id = threads.create(self.user, message)
-        return supervisor.run_turn(
-            self.user, self.thread_id, message, images=list(images), technique=technique
-        )
+        thread = self.thread()
+        try:
+            return thread.send(message, images, technique)
+        finally:
+            self.thread_id = thread.id
 
     def resume(self, decision):
         """Answer the pending Confirmation (approve, approve with edits, or reject with a
         note) and return what the Turn shows next: a reply or another Confirmation."""
-        from perry import supervisor
+        from perry.supervisor import Reject
 
-        return supervisor.resume_turn(self.user, self.thread_id, decision)
+        if isinstance(decision, Reject):
+            return self.thread().reject(decision.note)
+        return self.thread().approve(decision.edits)
 
     def say(self, audio: bytes) -> "VoiceReply":
         """Run one Turn from recorded speech, as push-to-talk does: the transcription is
         sent as the message, and the reply comes back as text and (unless a limit stops
         it, which the note says) audio."""
-        from perry import supervisor, threads, voice
-
-        turn_id = voice.new_turn()
-        transcript = voice.transcribe(self.user, audio, self.thread_id, turn_id)
-        if self.thread_id is None:
-            self.thread_id = threads.create(self.user, transcript)
-        text = supervisor.run_turn(self.user, self.thread_id, transcript, turn_id=turn_id)
-        speech = voice.read_aloud(self.user, text, self.thread_id, turn_id)
-        return VoiceReply(transcript, text, speech.audio, speech.note)
+        thread = self.thread()
+        heard = thread.hear(audio)
+        try:
+            text = thread.send(heard)
+        finally:
+            self.thread_id = thread.id
+        speech = thread.read_aloud(heard, text)
+        return VoiceReply(heard.transcript, text, speech.audio, speech.note)
 
     def history(self) -> list[dict]:
-        from perry import supervisor
-
-        return supervisor.thread_history(self.thread_id) if self.thread_id else []
+        return self.thread().history()
 
     def consulted(self) -> list[str]:
         """The Agent tools the Supervisor called during the latest Turn, in order."""

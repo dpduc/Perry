@@ -1,9 +1,9 @@
 """Push-to-talk: a voice request is one Turn, from transcribing it to reading the answer aloud.
 
-The UI makes a Turn id with `new_turn()` when the recording arrives, then passes it to
-`transcribe`, `supervisor.run_turn` and `read_aloud`. So speech-to-text and
-text-to-speech are attributed to that Turn in the usage ledger and count toward its
-token ceiling. Both wait for the daily cap: transcribing is refused over it, and the
+The Thread (`threads.Thread.hear`) makes a Turn id with `new_turn()` when the recording
+arrives, then passes it to `transcribe`, `supervisor.run_turn` and `read_aloud`. So
+speech-to-text and text-to-speech are attributed to that Turn in the usage ledger and
+count toward its token ceiling. Both wait for the daily cap: transcribing is refused over it, and the
 answer is then shown but not read aloud.
 """
 
