@@ -62,6 +62,11 @@ def is_transient(error: BaseException) -> bool:
 # quota is used up or it stays overloaded (see `_FreeFirst`). Without OPENAI_API_KEY there
 # is no fallback.
 LLM_MODEL = os.getenv("PERRY_LLM_MODEL", "gemini-3.8-flash")
+# What a person registering is told about where their messages go.
+CHAT_DATA_NOTICE = (
+    "Perry answers with Google Gemini or, as a fallback, OpenAI: your messages are sent "
+    "to Google or OpenAI and may be logged."
+)
 FALLBACK_LLM_MODEL = os.getenv("PERRY_FALLBACK_LLM_MODEL", "gpt-5.4-mini")
 # The benchmark grid runs every Turn on one paid model, never mixing in the free one.
 BENCHMARK_LLM_MODEL = os.getenv("PERRY_BENCHMARK_LLM_MODEL", "gpt-5.4-nano")
@@ -497,6 +502,22 @@ def summary_model_hint() -> str:
         f"Summaries are written by the local model {summary_model_name()}: is Ollama "
         f"running at {OLLAMA_URL} with it (PERRY_SUMMARY_MODEL)?"
     )
+
+
+def local_models_problem() -> str | None:
+    """Why the local models (embeddings and Summaries, on Ollama) can't be reached, as one
+    line for the Owner, or None when they can. Asked before serving Perry to others."""
+    import urllib.error
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(f"{OLLAMA_URL}/api/tags", timeout=3):
+            return None
+    except (urllib.error.URLError, OSError):
+        return (
+            f"Ollama isn't reachable at {OLLAMA_URL} (PERRY_OLLAMA_URL). Start it with "
+            "`ollama serve` (or open the Ollama app): Perry embeds every question there."
+        )
 
 
 def summary_model_name() -> str:

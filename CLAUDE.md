@@ -5,7 +5,7 @@
 - **Database**: one Postgres (`compose.yaml`, port 5433). The one exception is ColBERT's on-disk index, which ingestion keeps in step with Postgres (`docs/adr/0002`). Connect via `127.0.0.1`, not `localhost`: on Windows, `localhost` tries IPv6 first and stalls. The pool prepares every statement (the LangGraph checkpointer requires it), so multi-statement SQL needs `prepare=False`.
 - **Knowledge Agent interface** stays retrieval-agnostic (question in, cited findings out). See `docs/adr/0001`.
 - **Library APIs**: langchain 1.x / langgraph 1.x / gradio 6.x differ a lot from older tutorials. Verify signatures against `.venv/Lib/site-packages`.
-- **Checks**: `uv run pytest` (DB tests need `docker compose up -d`; they use a separate `perry_test` database) and `uv run ruff check .`
+- **Checks**: `uv run pytest` (DB tests need `docker compose up -d`; each checkout gets its own `perry_test_*` database) and `uv run ruff check .`. The git hooks and CI run both; a commit or merge waits 5 to 15 minutes for the full suite, so give it a long timeout.
 
 ## Agent skills
 

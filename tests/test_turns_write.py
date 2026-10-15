@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 
 import pytest
 from fakes import call, last_message, with_usage
+from logins import request_as
 
 from perry.supervisor import Approve, Confirmation, Reject
 from perry.workspace import InMemoryWorkspace
@@ -205,7 +206,8 @@ def test_confirmation_card_shows_the_write_actions_fields_and_approves_the_edite
     app.build()  # the card and its wiring construct
     propose_email_to_sam(perry)
     message = {"text": "Tell Sam I'm running 10 minutes late", "files": []}
-    history, thread_id, _, waiting, card, summary, *rest = app.answer(message, [], None)
+    owner = request_as(perry.user)
+    history, thread_id, _, waiting, card, summary, *rest = app.answer(owner, message, [], None)
     boxes = dict(zip(app.CARD_FIELDS, rest[:-1], strict=True))
 
     assert card["visible"] and "Running late" in summary
@@ -215,7 +217,7 @@ def test_confirmation_card_shows_the_write_actions_fields_and_approves_the_edite
     values = [box["value"] for box in boxes.values()]
     values[list(app.CARD_FIELDS).index("subject")] = "Late, sorry"
     perry.script(last_message, "Sent it.")
-    history, waiting, card, *_ = app.approve(thread_id, waiting, history, *values)
+    history, waiting, card, *_ = app.approve(owner, thread_id, waiting, history, *values)
 
     assert [e.subject for e in workspace.sent] == ["Late, sorry"]
     assert waiting is None and not card["visible"]

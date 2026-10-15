@@ -4,6 +4,28 @@ A personal assistant that answers from your own documents and data, and acts on 
 
 ## Language
 
+### People
+
+**User**:
+A person who logs into Perry with a username and password. Every User searches the same Documents and Datasets, but sees only their own Threads.
+_Avoid_: Account (that is the Google account behind the Workspace), member, client
+
+**Profile**:
+The basic facts a User gives about themselves, such as name and time zone, which Perry reads when answering them.
+_Avoid_: Memory (that would be what Perry learns from conversation), settings
+
+**Owner**:
+The one User Perry belongs to. Only the Owner uploads Documents and Datasets, connects the Workspace, creates Invites and Reset Codes, and has Turns that may involve the Task Agent.
+_Avoid_: Admin, superuser
+
+**Invite**:
+A single-use code from the Owner that lets one person register as a User. It expires after a week.
+_Avoid_: Invitation link, sign-up code, token
+
+**Reset Code**:
+A single-use code from the Owner that lets a User who forgot their password choose a new one. It expires after a day, and using it logs that User out everywhere else.
+_Avoid_: Reset token, reset link, recovery code
+
 ### Orchestration
 
 **Supervisor**:
@@ -34,7 +56,7 @@ The Supervisor splitting one request into steps for different Agents, such as fi
 _Avoid_: Decomposition (on its own), planning, query decomposition
 
 **Thread**:
-A resumable conversation made of Turns.
+A resumable conversation made of Turns, belonging to one User.
 _Avoid_: Session, chat, conversation history
 
 **Usage Ledger**:
@@ -86,7 +108,7 @@ _Avoid_: Code interpreter, executor, container (when talking to users)
 ### Actions
 
 **Workspace**:
-Your calendar and email as Perry sees them, through one connected Google account. The Task Agent reaches them only through the Workspace, never Google directly. Email threads in the Workspace are "email threads", never Threads.
+The Owner's calendar and email as Perry sees them, through one connected Google account. The Task Agent reaches them only through the Workspace, never Google directly. Email threads in the Workspace are "email threads", never Threads.
 _Avoid_: Google, account, integration (when meaning the calendar and email)
 
 **Test account** / **Real account**:

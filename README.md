@@ -35,6 +35,8 @@ Then create `.env` in the repo root (it's gitignored, never commit it):
 ```ini
 GEMINI_API_KEY=...                   # https://aistudio.google.com/apikey (the free tier is enough)
 OPENAI_API_KEY=...                   # optional, paid: answers when Gemini's free quota is used up, and runs the benchmark grid
+PERRY_SESSION_SECRET=...             # signs login sessions: uv run python -c "import secrets; print(secrets.token_urlsafe(32))"
+PERRY_NGROK_DOMAIN=...               # only to serve over ngrok: your free static domain, e.g. your-name.ngrok-free.app
 # Optional LangSmith tracing; the endpoint must match your account's region:
 # api. (US), eu.api. or apac.api.smith.langchain.com (a 403 on every call means a region mismatch)
 LANGCHAIN_TRACING_V2=true
@@ -49,6 +51,12 @@ ollama pull nomic-embed-text   # embeddings for every Chunk and Summary (needed)
 ollama pull qwen3:8b           # Summaries, Document metadata and RAPTOR (background)
 ```
 
+Create yourself as the Owner, once (it asks for a username, a password of at least 10 characters, a display name and a time zone such as `Europe/London`). Threads from before there were Users become yours:
+
+```powershell
+uv run python -m perry.users create-owner
+```
+
 Everything else has a default; see [Settings](#settings) for the optional overrides.
 
 **Which model does what:** chat (the Supervisor, the Agents, rewriting and picking) runs on Gemini's free tier. When its daily quota is used up (it resets at midnight Pacific time, 14:00 or 15:00 in Bangkok), or Gemini stays overloaded after retries, the call goes to the paid OpenAI model (`PERRY_FALLBACK_LLM_MODEL`) instead, and so does the rest of that day's chat. Without `OPENAI_API_KEY` there is no fallback and Perry says the quota is used up. Embeddings, Summaries and ColBERT run locally and cost nothing. Speech and scanned pages stay on Gemini only.
@@ -56,7 +64,7 @@ Everything else has a default; see [Settings](#settings) for the optional overri
 ## Use
 
 ```powershell
-uv run python -m perry.app              # chat UI at http://127.0.0.1:7860
+uv run python -m perry.web              # Perry at http://127.0.0.1:7860: log in, then chat
 uv run python -m perry.ingest some\folder  # bulk-load Documents (.pdf, .md, .txt); shows the estimated cost and asks first (--yes skips the question)
 ```
 
@@ -64,9 +72,37 @@ Your data lives in the Postgres from `compose.yaml`, in the Docker volume `pgdat
 
 ### The UI
 
+Perry asks you to log in first, even when it runs on your own machine; a login lasts 14 days in that browser. *Log out* is at the top of the sidebar. *Profile* there lets you change your display name, time zone and an optional about-me line; Perry reads them on every Turn, and works out "today" or "this week" in your time zone.
+
+To let someone else in, open the **Owner panel** (the link next to your name in the sidebar, or `/owner`) and click *Create an Invite*. Send them the Invite's register link. Each Invite works once and expires after 7 days, and you can withdraw an unused one. On the register page they choose a username, a password (at least 10 characters), a display name and a time zone, and are logged in straight away.
+
+*Log out* logs you out in every browser at once. After 5 failed logins for a username within 15 minutes, logins with it are refused until the 15 minutes are up. A User who forgot their password gets a Reset Code from the Owner panel. If you, the Owner, are locked out or forgot yours, reset it on this machine; it asks for the new password, logs you out everywhere and clears the failed logins:
+
+```powershell
+uv run python -m perry.users reset-password <username>
+```
+
 - **Sidebar:** *New thread* and a *Threads* picker to resume an earlier conversation; *Documents* and *Datasets* upload areas (the Datasets list shows each name with its columns); today's usage (`Today: N tokens · $x of $cap`); and *Calendar and email*, where you pick **Test account** or **Real account** and click **Connect Google**.
 - **Chat:** type in the box (the paperclip attaches images). Below it, **Record** is push-to-talk and the player on the right speaks Perry's answer.
 - When Perry needs your approval, a **Confirmation card** appears under the chat with the editable fields, **Approve**, **Reject** and a note box.
+
+### Share Perry over ngrok
+
+To let other Users reach Perry from the internet, serve it through an [ngrok](https://ngrok.com) tunnel on your free static domain. Once:
+
+1. Sign up at ngrok, install it (`winget install ngrok.ngrok`) and connect your account: `ngrok config add-authtoken <your token>` (the token is on the dashboard's *Your Authtoken* page).
+2. Claim your free static domain on the dashboard's *Domains* page (one per free account) and put it in `.env` as `PERRY_NGROK_DOMAIN`, e.g. `PERRY_NGROK_DOMAIN=your-name.ngrok-free.app`.
+3. Make sure `.env` has `PERRY_SESSION_SECRET` and that you've created the Owner (see [Setup](#setup)).
+
+Then, from the repo root:
+
+```powershell
+uv run python -m scripts.serve
+```
+
+It starts Postgres (`docker compose up -d`, unless it's already up), checks that Ollama answers, launches Perry on 127.0.0.1:7860 (never on a public interface), opens the tunnel with `ngrok http --url=$PERRY_NGROK_DOMAIN` and prints the public URL, `https://<your domain>/`. It refuses to start, saying what's missing, without `PERRY_NGROK_DOMAIN`, `PERRY_SESSION_SECRET`, ngrok, Ollama or an Owner. Ctrl+C stops Perry and ngrok.
+
+Served this way the login cookie is marked Secure, so log in through the public URL; plain `uv run python -m perry.web` is for using Perry on this machine only. ngrok's free plan shows visitors a one-time warning page before Perry; click *Visit Site*. Every Turn anyone takes spends your Gemini quota and Daily Cap.
 
 ## Tutorials
 
@@ -212,6 +248,7 @@ All optional; add any of these to `.env` to override the default.
 
 | Setting | Default | What it does |
 |---|---|---|
+| `PERRY_NGROK_DOMAIN` | none | Your ngrok static domain; `scripts.serve` needs it (see [Share Perry over ngrok](#share-perry-over-ngrok)) |
 | `PERRY_LLM_MODEL` | `gemini-3.8-flash` | Chat model (free tier); also used for speech-to-text and image reading |
 | `PERRY_FALLBACK_LLM_MODEL` | `gpt-5.4-mini` | Paid OpenAI chat model used once Gemini's free quota is used up or it stays overloaded (needs `OPENAI_API_KEY`); give it a price in `prices.toml` |
 | `PERRY_BENCHMARK_LLM_MODEL` | `gpt-5.4-nano` | Paid OpenAI chat model every benchmark-grid Turn runs on |

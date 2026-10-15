@@ -1,4 +1,8 @@
-"""Perry's chat UI. Run with: uv run python -m perry.app"""
+"""Perry's chat UI, served behind the login pages by perry.web. Run with:
+uv run python -m perry.web
+
+Handlers that act for the User take Gradio's request first and get the User with
+`user_of`, never from anything the browser holds."""
 
 from pathlib import Path
 
@@ -7,29 +11,81 @@ import gradio as gr
 from perry import (
     charts,
     datasets,
-    db,
     google_auth,
     ingest,
     models,
+    pages,
     privacy,
     summaries,
     techniques,
     threads,
     usage,
-    voice,
+    users,
     workspace,
 )
-from perry.supervisor import (
-    Approve,
-    Confirmation,
-    Reject,
-    pending_confirmation,
-    resume_turn,
-    run_turn,
-    thread_history,
-)
+from perry.supervisor import Confirmation
 
 EMPTY = {"text": "", "files": []}
+
+# Logging out is a POST (so a link elsewhere can't log you out): submit a form for it.
+LOG_OUT_JS = f"""() => {{
+  const form = document.createElement("form");
+  form.method = "post";
+  form.action = "{pages.LOGOUT_PATH}";
+  document.body.appendChild(form);
+  form.submit();
+}}"""
+
+LOG_IN_AGAIN = "You're not logged in. Reload the page to log in again."
+
+
+def user_of(request: gr.Request | None) -> users.User:
+    """The User Gradio's request belongs to (perry.web gives Gradio their id as the
+    request's username). Refused if there is none or they are disabled."""
+    username = getattr(request, "username", None)
+    user = users.get(int(username)) if username and str(username).isdigit() else None
+    if user is None or user.disabled:
+        raise gr.Error(LOG_IN_AGAIN)
+    return user
+
+
+def thread_of(request: gr.Request | None, thread_id: str | None) -> threads.Thread:
+    """The request's User's Thread `thread_id` (None: one not started yet). Another
+    User's Thread is refused as if it didn't exist."""
+    try:
+        return threads.open(user_of(request), thread_id)
+    except threads.ThreadNotFound as missing:
+        raise gr.Error(str(missing)) from None
+
+
+OWNER_ONLY = "Only the Owner can do that."
+
+
+def owner_of(request: gr.Request | None) -> users.User:
+    """The Owner, if Gradio's request is theirs; refused for anyone else (ADR-0004)."""
+    user = user_of(request)
+    if not user.is_owner:
+        raise gr.Error(OWNER_ONLY)
+    return user
+
+
+# The sidebar's Owner-only controls: Document upload, Dataset upload, Workspace connect.
+OWNER_CONTROLS = ("documents", "datasets", "workspace")
+
+
+def owner_controls(request: gr.Request) -> list:
+    """Show the Owner-only controls (hidden until this says otherwise) to the Owner only."""
+    shown = user_of(request).is_owner
+    return [gr.update(visible=shown) for _ in OWNER_CONTROLS]
+
+
+def logged_in_as(request: gr.Request) -> str:
+    """The sidebar's note on who is logged in, with a link to the Owner panel for the
+    Owner."""
+    user = user_of(request)
+    note = f"Logged in as **{user.profile.display_name}**"
+    return f"{note} · [Owner panel](/owner)" if user.is_owner else note
+
 
 # Every field a Write Action can have: (label, lines, editable). The Confirmation card
 # shows the ones its Write Action takes.
@@ -67,25 +123,26 @@ def technique_choices() -> list[tuple[str, str]]:
 
 
 def answer(
+    request: gr.Request,
     message: dict,
     history: list[dict],
     thread_id: str | None,
     technique: str = AUTO,
-    voice_turn: str | None = None,
+    heard: threads.Heard | None = None,
 ):
-    """Run the Turn (`voice_turn` when the request came by voice), forcing `technique`
-    unless it is Auto. Outputs: chat, Thread, Thread picker, then `show()`'s card outputs."""
+    """Run the Turn (the one `heard` began, when the request came by voice), forcing
+    `technique` unless it is Auto. Outputs: chat, Thread, Thread picker, then `show()`'s
+    card outputs."""
+    thread = thread_of(request, thread_id)
     text, images = message.get("text", ""), message.get("files", [])
     if not text.strip() and not images:
         return history, thread_id, gr.skip(), *[gr.skip() for _ in confirmation_card(None)]
-    if thread_id is None:
-        thread_id = threads.create(text)
     # A pending Confirmation is cancelled by this message; the reply says so.
     forced = None if technique in (None, AUTO) else technique
-    outcome = run_turn(thread_id, text, images=images, turn_id=voice_turn, technique=forced)
+    outcome = thread.send(heard or text, images=images, technique=forced)
     history, *card = show(outcome, history)
-    picker = gr.update(choices=threads.list_recent(), value=thread_id)
-    return history, thread_id, picker, *card
+    picker = gr.update(choices=threads.list_recent(thread.user), value=thread.id)
+    return history, thread.id, picker, *card
 
 
 def show(outcome: str | Confirmation, history: list[dict]):
@@ -111,56 +168,78 @@ def confirmation_card(confirmation: Confirmation | None) -> list:
     return [confirmation, gr.update(visible=True), summary, *boxes, ""]
 
 
-def approve(thread_id: str | None, waiting: Confirmation | None, history: list[dict], *values):
+def approve(
+    request: gr.Request,
+    thread_id: str | None,
+    waiting: Confirmation | None,
+    history: list[dict],
+    *values,
+):
     """Approve the waiting Write Action with the card's fields (edited or not)."""
-    if thread_id is None or waiting is None:
+    thread = thread_of(request, thread_id)
+    if waiting is None:
         return history, *confirmation_card(None)
     edits = {
         name: value
         for name, value in zip(CARD_FIELDS, values, strict=True)
         if name in waiting.fields
     }
-    return show(resume_turn(thread_id, Approve(edits)), history)
+    return show(thread.approve(edits), history)
 
 
-def reject(thread_id: str | None, waiting: Confirmation | None, history: list[dict], note: str):
+def reject(
+    request: gr.Request,
+    thread_id: str | None,
+    waiting: Confirmation | None,
+    history: list[dict],
+    note: str,
+):
     """Reject the waiting Write Action; the note goes to Perry to revise."""
-    if thread_id is None or waiting is None:
+    thread = thread_of(request, thread_id)
+    if waiting is None:
         return history, *confirmation_card(None)
     shown = f"Rejected: {note}" if note.strip() else "Rejected."
     history = [*history, {"role": "user", "content": shown}]
-    return show(resume_turn(thread_id, Reject(note.strip())), history)
+    return show(thread.reject(note), history)
 
 
-def hear(recording: str | None, history: list[dict], thread_id: str | None):
+def hear(
+    request: gr.Request, recording: str | None, history: list[dict], thread_id: str | None
+):
     """Push-to-talk: transcribe the recording and show it as the user's message.
-    Outputs: message, chat, recorder, and the voice Turn (None if nothing is sent)."""
+    Outputs: message, chat, recorder, and what was Heard (None if nothing is sent)."""
+    thread = thread_of(request, thread_id)
     if not recording:
         return gr.skip(), history, None, None
-    turn_id = voice.new_turn()
     try:
-        transcript = voice.transcribe(Path(recording).read_bytes(), thread_id, turn_id)
+        heard = thread.hear(Path(recording).read_bytes())
     except usage.DailyCapReached as refused:
         return EMPTY, [*history, {"role": "assistant", "content": str(refused)}], None, None
     except Exception as error:  # noqa: BLE001 - tell the user, keep the UI usable
         gr.Warning(f"Couldn't transcribe the recording: {error}")
         return EMPTY, history, None, None
-    if not transcript.strip():
+    if not heard.transcript.strip():
         gr.Warning("I didn't catch anything. Hold the button and speak, then release.")
         return EMPTY, history, None, None
-    message = {"text": transcript, "files": []}
-    return message, [*history, {"role": "user", "content": transcript}], None, turn_id
+    message = {"text": heard.transcript, "files": []}
+    return message, [*history, {"role": "user", "content": heard.transcript}], None, heard
 
 
-def read_aloud(turn_id: str | None, history: list[dict], thread_id: str | None):
-    """Speak the latest answer, only when the request came by voice (as Turn `turn_id`)."""
-    if turn_id is None or not history or history[-1]["role"] != "assistant":
+def read_aloud(
+    request: gr.Request,
+    heard: threads.Heard | None,
+    history: list[dict],
+    thread_id: str | None,
+):
+    """Speak the latest answer, only when the request came by voice (as `heard`)."""
+    thread = thread_of(request, thread_id)
+    if heard is None or not history or history[-1]["role"] != "assistant":
         return None
     text = _text(history[-1]["content"])
     if not text:
         return None
     try:
-        speech = voice.read_aloud(text, thread_id, turn_id)
+        speech = thread.read_aloud(heard, text)
     except Exception as error:  # noqa: BLE001 - the text answer is already shown
         gr.Warning(f"Couldn't read the answer aloud: {error}")
         return None
@@ -178,23 +257,27 @@ def _text(content) -> str:
     return ""
 
 
-def open_thread(thread_id: str | None):
-    if not thread_id:
-        return [], None, *confirmation_card(None)
+def open_thread(request: gr.Request, thread_id: str | None):
+    """Show the Thread. Another User's Thread opens as if it didn't exist."""
+    user = user_of(request)
+    try:
+        thread = threads.open(user, thread_id or None)
+    except threads.ThreadNotFound:
+        thread = threads.open(user, None)
     history = []
-    for message in thread_history(thread_id):
+    for message in thread.history():
         is_answer = message["role"] == "assistant"
         history += charts.chat_messages(message["content"]) if is_answer else [message]
-    return history, thread_id, *confirmation_card(pending_confirmation(thread_id))
+    return history, thread.id, *confirmation_card(thread.pending_confirmation())
 
 
 def new_thread():
     return [], None, gr.update(value=None), *confirmation_card(None)
 
 
-def thread_choices():
-    """The Thread picker's list as it is now (the page may have been built long ago)."""
-    return gr.update(choices=threads.list_recent())
+def thread_choices(request: gr.Request):
+    """The User's Thread picker list as it is now (the page may have been built long ago)."""
+    return gr.update(choices=threads.list_recent(user_of(request)))
 
 
 def lock_threads():
@@ -207,8 +290,9 @@ def unlock_threads():
     return gr.update(interactive=True), gr.update(interactive=True)
 
 
-def propose_upload(files: list[str] | None):
-    """Show what ingesting the uploaded files would cost, and wait for the user's OK."""
+def propose_upload(request: gr.Request, files: list[str] | None):
+    """Show what ingesting the uploaded files would cost, and wait for the Owner's OK."""
+    owner_of(request)
     if not files:
         return gr.skip(), gr.skip(), gr.skip()
     estimate = ingest.estimate_ingestion([Path(file) for file in files])
@@ -218,11 +302,12 @@ def propose_upload(files: list[str] | None):
         return [], str(refused), gr.update(visible=False)
     if not estimate.tokens:
         # Nothing to pay for (e.g. every file is unchanged): no need to ask.
-        return [], *ingest_upload(files)
+        return [], *ingest_upload(request, files)
     return files, f"{estimate.describe()} Ingest now?", gr.update(visible=True)
 
 
-def ingest_upload(files: list[str]):
+def ingest_upload(request: gr.Request, files: list[str]):
+    owner_of(request)
     try:
         results = ingest.ingest_files([Path(file) for file in files])
     except ingest.OverBudget as refused:
@@ -236,7 +321,8 @@ def cancel_upload():
     return [], "Nothing ingested.", gr.update(visible=False)
 
 
-def upload_datasets(files: list[str] | None) -> tuple[str, str]:
+def upload_datasets(request: gr.Request, files: list[str] | None) -> tuple[str, str]:
+    owner_of(request)
     if not files:
         return gr.skip(), gr.skip()
     lines = []
@@ -290,7 +376,8 @@ def google_button():
 ACCOUNT_KINDS = [("Test account (fake data only)", "test"), ("Real account", "real")]
 
 
-def connect_google(kind: str | None):
+def connect_google(request: gr.Request, kind: str | None):
+    owner_of(request)
     if kind is None:
         return gr.skip(), "Choose whether this is a test or a real account first."
     try:
@@ -313,14 +400,16 @@ def build(privacy_notice: str = "") -> gr.Blocks:
     with gr.Blocks(title="Perry") as demo:
         thread_id = gr.State(None)
         pending = gr.State(EMPTY)
-        voice_turn = gr.State(None)  # the Turn id when the latest request came by voice
+        heard = gr.State(None)  # the latest request, when it came by voice
 
         with gr.Sidebar():
             gr.Markdown("## Perry")
+            who = gr.Markdown()
+            gr.Button("Profile", link="/profile", size="sm")
+            gr.Button("Log out", size="sm").click(None, js=LOG_OUT_JS)
             new_button = gr.Button("New thread", variant="primary")
-            thread_picker = gr.Dropdown(
-                choices=threads.list_recent(), label="Threads", value=None
-            )
+            # Filled on page load with the User's own Threads.
+            thread_picker = gr.Dropdown(choices=[], label="Threads", value=None)
             gr.Markdown("### Documents")
             technique = gr.Dropdown(
                 choices=technique_choices(),
@@ -328,28 +417,32 @@ def build(privacy_notice: str = "") -> gr.Blocks:
                 label="Retrieval Technique",
                 info="Auto lets Perry pick; choose one to force it for the next questions.",
             )
-            uploader = gr.File(
-                file_count="multiple", file_types=[".pdf", ".md", ".txt"], label="Upload"
-            )
-            upload_status = gr.Markdown()
+            # Owner-only controls start hidden; owner_controls shows them to the Owner.
+            with gr.Column(visible=False) as document_controls:
+                uploader = gr.File(
+                    file_count="multiple", file_types=[".pdf", ".md", ".txt"], label="Upload"
+                )
+                upload_status = gr.Markdown()
+                with gr.Row(visible=False) as upload_choice:
+                    ingest_button = gr.Button("Ingest", variant="primary", size="sm")
+                    cancel_button = gr.Button("Cancel", size="sm")
             summarising = gr.Markdown()
             # Summaries are written in the background, so the count is polled.
             summarising_timer = gr.Timer(10)
-            uploaded = gr.State([])  # files waiting for the user's OK to ingest
-            with gr.Row(visible=False) as upload_choice:
-                ingest_button = gr.Button("Ingest", variant="primary", size="sm")
-                cancel_button = gr.Button("Cancel", size="sm")
+            uploaded = gr.State([])  # files waiting for the Owner's OK to ingest
             gr.Markdown("### Datasets")
-            dataset_uploader = gr.File(
-                file_count="multiple", file_types=[".csv", ".xlsx"], label="Upload data"
-            )
-            dataset_status = gr.Markdown()
+            with gr.Column(visible=False) as dataset_controls:
+                dataset_uploader = gr.File(
+                    file_count="multiple", file_types=[".csv", ".xlsx"], label="Upload data"
+                )
+                dataset_status = gr.Markdown()
             datasets_shown = gr.Markdown(dataset_list)
             usage_status = gr.Markdown()
-            gr.Markdown("### Calendar and email")
-            account_kind = gr.Radio(ACCOUNT_KINDS, value=None, label="Account")
-            google = gr.Button()
-            google_status = gr.Markdown()
+            with gr.Column(visible=False) as workspace_controls:
+                gr.Markdown("### Calendar and email")
+                account_kind = gr.Radio(ACCOUNT_KINDS, value=None, label="Account")
+                google = gr.Button()
+                google_status = gr.Markdown()
 
         chatbot = gr.Chatbot(height="75vh", label="Perry")
         # The Confirmation card: one Write Action, shown exactly as it will be performed.
@@ -403,12 +496,12 @@ def build(privacy_notice: str = "") -> gr.Blocks:
             .then(show_user_message, [box, chatbot], [pending, chatbot, box])
             .then(answer, [pending, chatbot, thread_id, technique], answer_outputs)
         )
-        box.submit(lambda: None, None, voice_turn)
+        box.submit(lambda: None, None, heard)
         during_turn(
             mic.stop_recording(lock_threads, None, switching)
-            .then(hear, [mic, chatbot, thread_id], [pending, chatbot, mic, voice_turn])
-            .then(answer, [pending, chatbot, thread_id, technique, voice_turn], answer_outputs)
-            .then(read_aloud, [voice_turn, chatbot, thread_id], speaker)
+            .then(hear, [mic, chatbot, thread_id], [pending, chatbot, mic, heard])
+            .then(answer, [pending, chatbot, thread_id, technique, heard], answer_outputs)
+            .then(read_aloud, [heard, chatbot, thread_id], speaker)
         )
         during_turn(
             approve_button.click(lock_threads, None, switching).then(
@@ -436,6 +529,13 @@ def build(privacy_notice: str = "") -> gr.Blocks:
         dataset_uploader.upload(
             upload_datasets, dataset_uploader, [dataset_status, datasets_shown]
         )
+        demo.load(logged_in_as, None, who, api_name="logged_in_as")
+        demo.load(
+            owner_controls,
+            None,
+            [document_controls, dataset_controls, workspace_controls],
+            api_name="owner_controls",
+        )
         demo.load(sidebar_status, None, status_outputs)
         demo.load(summarising_status, None, summarising)
         summarising_timer.tick(summarising_status, None, summarising, show_progress="hidden")
@@ -446,13 +546,7 @@ def build(privacy_notice: str = "") -> gr.Blocks:
 
 
 if __name__ == "__main__":
-    # Before anything runs: switches tracing off if a real account is connected.
-    notice = privacy.startup() or ""
-    if notice:
-        print(notice)
-    db.init_schema()
-    # e.g. a changed embedding model, Documents stored before ColBERT, or after a crash.
-    ingest.ensure_indexes_current()
-    # Retry Summaries that failed (e.g. the local model wasn't running) and finish pending ones.
-    summaries.resume()
-    build(notice).launch(server_name="127.0.0.1", allowed_paths=[str(charts.directory())])
+    # The chat UI is only served behind the login pages.
+    from perry import web
+
+    web.main()

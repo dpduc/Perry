@@ -223,10 +223,12 @@ def test_connecting_a_real_account_turns_tracing_off_straight_away(app_data, loc
     assert not tracing_is_enabled()
 
 
-def test_the_connect_button_explains_a_refusal(app_data, cloud):
+def test_the_connect_button_explains_a_refusal(app_data, cloud, owner):
+    from logins import request_as
+
     from perry import app
 
-    _, message = app.connect_google("real")
+    _, message = app.connect_google(request_as(owner), "real")
 
     assert "won't connect a real Google account" in message
     assert google_auth.status() == "not connected"

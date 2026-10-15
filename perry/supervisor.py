@@ -1,6 +1,6 @@
 """The Supervisor: plans each Turn, delegates to Agents, and composes the answer.
 
-Turn interface: `run_turn` answers a message with either the final answer (a str) or
+Turn interface: `run_turn` answers a User's message with either the final answer (a str) or
 a pending `Confirmation` for one Write Action. `resume_turn` continues that Turn with
 the user's decision (`Approve`, with optional edits, or `Reject` with a note), and
 again returns an answer or the next Confirmation. A new message on a Thread with a
@@ -10,37 +10,48 @@ Task Agent's Confirmation gate, kept in the Thread's checkpoint.
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 from functools import cache
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from langchain.agents import create_agent
-from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, ToolMessage
+from langchain.agents.middleware import AgentMiddleware
+from langchain_core.messages import (
+    AIMessage,
+    HumanMessage,
+    RemoveMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from langgraph.checkpoint.postgres import PostgresSaver
+from langgraph.config import get_config
 from langgraph.errors import GraphRecursionError
 from langgraph.types import Command, StateSnapshot
 
-from perry import charts, db, models, privacy, retries, usage, workspace
+from perry import charts, db, models, privacy, retries, threads, usage, workspace
 from perry.agents import analysis, knowledge, task
 from perry.images import user_message
+from perry.users import Profile, User
 
 # The per-request override: the Retrieval Technique the Knowledge Agent must use, if any.
 RETRIEVAL_TECHNIQUE = "perry_retrieval_technique"
+# The Profile of the User the Turn is for, which the Supervisor is given on every model call.
+_PROFILE = "perry_profile"
 
 # Each step is one Supervisor decision (call an Agent, or answer).
 MAX_STEPS_PER_TURN = 6
 
-SYSTEM_PROMPT = """You are Perry, a personal assistant. You coordinate specialist Agents \
+_PROMPT = """You are Perry, a personal assistant. You coordinate specialist Agents \
 and answer the user.
 
 Agents available as tools:
 - ask_knowledge_agent: anything that could be answered from the user's own Documents \
-(notes, reports, PDFs they uploaded).
-- ask_task_agent: the user's calendar and email: what's on, what someone wrote, and \
-sending, replying, scheduling, moving or deleting (the user confirms each of those).
-- ask_analysis_agent: questions about the user's Datasets (CSV or spreadsheet data), \
+(notes, reports, contacts, PDFs they uploaded).
+{task_agent}- ask_analysis_agent: questions about the user's Datasets (CSV or spreadsheet data), \
 such as totals, averages, counts or comparisons.
 
 Rules:
@@ -53,10 +64,27 @@ rather than answering from general knowledge.
 - Keep chart markers like [chart: <id>.png] exactly as given; they show as images.
 - If a step comes back FAILED, give the results of the steps that worked, then say which \
 step failed. Never guess what a failed step would have returned.
-- To act on a request that needs other information first (e.g. email a summary of some \
-notes), get that information, then give the Task Agent the complete content to send.
+{task_agent_rules}"""
+
+# Email and calendar are the Owner's (ADR-0004): only the Owner's Supervisor has the Task Agent.
+_TASK_AGENT = """- ask_task_agent: the user's calendar and email: what's on, what someone wrote, \
+and sending, replying, scheduling, moving or deleting (the user confirms each of those).
+"""
+_TASK_AGENT_RULES = """- To act on a request that needs other information first (e.g. email a \
+summary of some notes), get that information, then give the Task Agent the complete content \
+to send.
+- To email or invite someone the user names without giving their address, first ask \
+the Knowledge Agent for that person's email address in the user's Documents (e.g. \
+contacts), then give it to the Task Agent. Only if the Documents don't have it, let \
+the Task Agent look it up, and say where the address came from.
 - If the user rejected a Write Action with a note, ask the Task Agent again with a \
 request revised to follow the note."""
+_NOT_THE_OWNER = """- Email and calendar aren't available to this user: they belong to Perry's \
+Owner. If asked about email, calendar or meetings, say that email and calendar aren't \
+available to them."""
+
+SYSTEM_PROMPT = _PROMPT.format(task_agent=_TASK_AGENT, task_agent_rules=_TASK_AGENT_RULES)
+NON_OWNER_PROMPT = _PROMPT.format(task_agent="", task_agent_rules=_NOT_THE_OWNER)
 
 
 @tool(response_format="content_and_artifact")
@@ -87,6 +115,34 @@ def ask_analysis_agent(question: str) -> str:
     return analysis.ask(question)
 
 
+def profile_block(profile: Profile, now: datetime) -> str:
+    """What the Supervisor is told about the User it is answering, at `now` (their time)."""
+    lines = [
+        "About the user you are answering:",
+        f"- Name: {profile.display_name}. Address them by this name.",
+        (
+            f"- Time zone: {profile.time_zone}. It is now {now:%A %Y-%m-%d %H:%M} there. "
+            "Work out relative dates (today, tomorrow, this week) in this time zone, and "
+            "give Agents exact dates."
+        ),
+    ]
+    if profile.about:
+        lines.append(f"- About them, in their words (take it into account): {profile.about}")
+    return "\n".join(lines)
+
+
+class GiveProfile(AgentMiddleware):
+    """Adds the Turn's User's Profile, with their local date and time, to the system prompt."""
+
+    def wrap_model_call(self, request, handler):
+        profile = get_config().get("configurable", {}).get(_PROFILE)
+        if profile is None:
+            return handler(request)
+        block = profile_block(profile, datetime.now(ZoneInfo(profile.time_zone)))
+        prompt = f"{request.system_prompt}\n\n{block}" if request.system_prompt else block
+        return handler(request.override(system_message=SystemMessage(prompt)))
+
+
 @cache
 def _checkpointer() -> PostgresSaver:
     checkpointer = PostgresSaver(db.pool())
@@ -94,19 +150,32 @@ def _checkpointer() -> PostgresSaver:
     return checkpointer
 
 
-def supervisor():
+def supervisor(user: User):
+    """The Supervisor for `user`'s Turns: only the Owner's has the Task Agent."""
+    return _build(owner=user.is_owner)
+
+
+def _state_reader():
+    """A graph for reading a Thread's checkpointed state (history, a pending
+    Confirmation, the Agents consulted), never for running a Turn. It is built like a
+    non-Owner's Supervisor, so it can't fall back to the Owner's tools."""
+    return _build(owner=False)
+
+
+def _build(*, owner: bool):
     # Built per call (cheap) so it always uses the current model provider.
     return create_agent(
         models.chat_model(),
         tools=[
             ask_knowledge_agent,
-            ask_task_agent,
+            *([ask_task_agent] if owner else []),
             ask_analysis_agent,
         ],
         middleware=[
             retries.RetryFailedSteps(),
+            GiveProfile(),
         ],
-        system_prompt=SYSTEM_PROMPT,
+        system_prompt=SYSTEM_PROMPT if owner else NON_OWNER_PROMPT,
         checkpointer=_checkpointer(),
         name="supervisor",
     )
@@ -183,14 +252,15 @@ class _TurnRun:
     def start(
         cls,
         graph,
+        user: User,
         thread_id: str,
         before: StateSnapshot,
         request: HumanMessage | None,
         turn_id: str | None = None,
         technique: str | None = None,
     ) -> "_TurnRun":
-        """A new Turn for `request` (`turn_id`, or a new id; `technique` forced, if
-        given), or with no `request` the Turn `before` is paused in."""
+        """A new Turn for `user`'s `request` (`turn_id`, or a new id; `technique` forced,
+        if given), or with no `request` the Turn `before` is paused in."""
         paused = (before.metadata or {}) if request is None else {}
         turn_id = paused.get(_TURN_ID) or turn_id or usage.new_turn_id()
         technique = paused.get(_TURN_TECHNIQUE, technique)
@@ -199,7 +269,11 @@ class _TurnRun:
         resumes = paused.get(_TURN_RESUMES, -1) + 1
         steps_used = max(0, _graph_step(before) - started_at - resumes)
         config = {
-            "configurable": {"thread_id": thread_id, RETRIEVAL_TECHNIQUE: technique},
+            "configurable": {
+                "thread_id": thread_id,
+                RETRIEVAL_TECHNIQUE: technique,
+                _PROFILE: user.profile,
+            },
             "metadata": {
                 _TURN_ID: turn_id,
                 _TURN_STARTED_AT_STEP: started_at,
@@ -220,50 +294,56 @@ class _TurnRun:
 
 
 def run_turn(
+    user: User,
     thread_id: str,
     message: str,
     images: list[str | Path] = (),
     turn_id: str | None = None,
     technique: str | None = None,
 ) -> TurnResult:
-    """Answer `message`, with any attached image files given to the model as well.
-    Returns the answer, or the Confirmation the Turn is waiting for.
+    """Answer `user`'s `message`, with any attached image files given to the model as
+    well. Returns the answer, or the Confirmation the Turn is waiting for.
 
     `turn_id` continues a Turn whose model calls began before the message existed
     (e.g. transcribing a voice request); by default the Turn is new. `technique` (the
     per-request override) names the Retrieval Technique the Knowledge Agent must use
-    if the Supervisor asks it; by default the Knowledge Agent picks."""
+    if the Supervisor asks it; by default the Knowledge Agent picks.
+
+    Raises threads.ThreadNotFound if the Thread isn't `user`'s."""
+    threads.require(thread_id, user)
     config = _config(thread_id)
-    graph = supervisor()
+    graph = supervisor(user)
     cancelled = _cancel_pending(graph, config)
     if refused := usage.daily_cap_refusal():
         outcome = refused
     else:
         request = user_message(message, images)
         before = graph.get_state(config)
-        run = _TurnRun.start(graph, thread_id, before, request, turn_id, technique)
-        outcome = _run(run, {"messages": [request]})
+        run = _TurnRun.start(graph, user, thread_id, before, request, turn_id, technique)
+        outcome = _run(user, run, {"messages": [request]})
     if cancelled and isinstance(outcome, str):
         return f"{cancelled}\n\n{outcome}"
     return outcome
 
 
-def resume_turn(thread_id: str, decision: Decision) -> TurnResult:
-    """Continue the Turn waiting on a Confirmation with the user's decision.
-    Returns the answer, or the next Confirmation."""
-    graph = supervisor()
+def resume_turn(user: User, thread_id: str, decision: Decision) -> TurnResult:
+    """Continue the Turn waiting on a Confirmation with `user`'s decision.
+    Returns the answer, or the next Confirmation. Raises threads.ThreadNotFound if the
+    Thread isn't `user`'s."""
+    threads.require(thread_id, user)
+    graph = supervisor(user)
     before = graph.get_state(_config(thread_id))
     if not before.interrupts:
         return NOTHING_PENDING
     requests = before.interrupts[0].value["action_requests"]
     rest = [{"type": "reject", "message": ONE_AT_A_TIME}] * (len(requests) - 1)
     resume = Command(resume={"decisions": [_decision(decision, requests[0]), *rest]})
-    return _run(_TurnRun.start(graph, thread_id, before, None), resume)
+    return _run(user, _TurnRun.start(graph, user, thread_id, before, None), resume)
 
 
 def pending_confirmation(thread_id: str) -> Confirmation | None:
     """The Confirmation the Thread is waiting for, if any."""
-    interrupts = supervisor().get_state(_config(thread_id)).interrupts
+    interrupts = _state_reader().get_state(_config(thread_id)).interrupts
     return _confirmation(interrupts[0].value) if interrupts else None
 
 
@@ -293,10 +373,10 @@ _STOP_REPLIES: dict[type[BaseException], Callable[[Any], str]] = {
 _DELIBERATE_STOPS = tuple(_STOP_REPLIES)
 
 
-def _run(run: _TurnRun, run_input) -> TurnResult:
+def _run(user: User, run: _TurnRun, run_input) -> TurnResult:
     """Run (or, with no `request`, resume) a Turn and clean up the Thread if it stops early."""
     try:
-        with usage.turn(run.thread_id, run.turn_id):
+        with usage.turn(user, run.thread_id, run.turn_id):
             result = run.graph.invoke(run_input, run.config)
     except _DELIBERATE_STOPS as stopped:
         if isinstance(stopped, usage.TurnTokenCeilingReached) and run.request is not None:
@@ -330,7 +410,7 @@ def agent_results(messages: list) -> list[ToolMessage]:
 
 def agents_consulted(thread_id: str) -> list[str]:
     """The Agent tools the Supervisor called during the Thread's latest Turn, in order."""
-    messages = supervisor().get_state(_config(thread_id)).values.get("messages", [])
+    messages = _state_reader().get_state(_config(thread_id)).values.get("messages", [])
     return [m.name for m in agent_results(messages)]
 
 
@@ -441,7 +521,7 @@ def _stop_at_ceiling(run: _TurnRun, ceiling: usage.TurnTokenCeilingReached) -> s
 
 def thread_history(thread_id: str) -> list[dict]:
     """The Thread as user/assistant messages, without the Agent calls in between."""
-    state = supervisor().get_state(_config(thread_id))
+    state = _state_reader().get_state(_config(thread_id))
     history, turn = [], []
     for msg in state.values.get("messages", []):
         turn.append(msg)

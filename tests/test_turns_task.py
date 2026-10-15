@@ -1,18 +1,22 @@
 """Turns that need the Task Agent, against the in-memory Workspace fake."""
 
 from datetime import date, datetime, time, timedelta
+from zoneinfo import ZoneInfo
 
 from fakes import call, last_message
 
+# The Owner's Profile time zone: the Task Agent works out dates in it.
+OWNERS_ZONE = ZoneInfo("Europe/London")
+
 
 def at(day: date, hour: int) -> datetime:
-    return datetime.combine(day, time(hour)).astimezone()
+    return datetime.combine(day, time(hour), tzinfo=OWNERS_ZONE)
 
 
 def test_whats_on_tomorrow_lists_tomorrows_events(perry, workspace):
     from perry.workspace import Event
 
-    today = datetime.now().astimezone().date()
+    today = datetime.now(OWNERS_ZONE).date()
     tomorrow = today + timedelta(days=1)
     workspace.events += [
         Event("Dentist", at(tomorrow, 9), at(tomorrow, 10), location="High Street"),

@@ -1,0 +1,363 @@
+"""The served app: Perry's login and logout pages, with the chat UI (perry.app) mounted
+behind them at /chat. Run with: uv run python -m perry.web
+
+Every request under /chat, page or Gradio API, needs a session: pages without one are
+sent to the login page, API calls are refused. Any state-changing request (not a GET)
+from another site is refused (see `_from_this_site`). Handlers learn the User from Gradio's
+request (see `perry.app.user_of`), never from anything the browser holds.
+"""
+
+import html
+from dataclasses import dataclass
+from urllib.parse import urlsplit
+
+import gradio as gr
+from fastapi import FastAPI, Form, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+
+from perry import app as chat_ui
+from perry import charts, models, owner_panel, pages, users
+from perry.pages import CHAT_PATH, LOGIN_PATH, LOGOUT_PATH, SESSION_COOKIE
+
+HOST = "127.0.0.1"
+PORT = 7860
+
+
+def create_app(blocks: gr.Blocks | None = None, *, secure_cookies: bool = False) -> FastAPI:
+    """The served app, with `blocks` (by default the chat UI) mounted at /chat.
+
+    Refuses to start if there is no Owner or no session secret. `secure_cookies` marks
+    the session cookie Secure, for serving over HTTPS."""
+    users.require_owner()
+    users.session_secret()
+    served = FastAPI()
+
+    @served.middleware("http")
+    async def require_session(request: Request, call_next):
+        path = request.url.path
+        in_chat = path == CHAT_PATH or path.startswith(CHAT_PATH + "/")
+        if in_chat and pages.current_user(request) is None:
+            if path.rstrip("/") == CHAT_PATH:
+                return RedirectResponse(LOGIN_PATH, status_code=303)
+            return JSONResponse({"error": "Not logged in"}, status_code=401)
+        return await call_next(request)
+
+    @served.middleware("http")
+    async def refuse_cross_site(request: Request, call_next):
+        if request.method not in SAFE_METHODS and not _from_this_site(request):
+            return pages.page("Refused", pages.error_line(CROSS_SITE), status_code=403)
+        return await call_next(request)
+
+    @served.get("/")
+    def home(request: Request):
+        into = f"{CHAT_PATH}/" if pages.current_user(request) else LOGIN_PATH
+        return RedirectResponse(into, status_code=303)
+
+    @served.get(LOGIN_PATH, response_class=HTMLResponse)
+    def login_page(request: Request):
+        if pages.current_user(request) is not None:
+            return RedirectResponse(f"{CHAT_PATH}/", status_code=303)
+        return _login_page()
+
+    @served.post(LOGIN_PATH)
+    def log_in(username: str = Form(""), password: str = Form("")):
+        try:
+            user = users.authenticate(username, password)
+        except users.TooManyLogins as refused:
+            return _login_page(str(refused), username, status_code=429)
+        except users.Refused as refused:
+            return _login_page(str(refused), username, status_code=401)
+        return logged_in(user)
+
+    def logged_in(user: users.User) -> RedirectResponse:
+        """Into Perry, with a new session for `user`."""
+        return with_session(RedirectResponse(f"{CHAT_PATH}/", status_code=303), user)
+
+    def with_session(response, user: users.User):
+        """`response`, also giving the browser a new session for `user`."""
+        response.set_cookie(
+            SESSION_COOKIE,
+            users.start_session(user),
+            max_age=users.SESSION_SECONDS,
+            httponly=True,
+            secure=secure_cookies,
+            samesite="lax",
+        )
+        return response
+
+    @served.get("/register", response_class=HTMLResponse)
+    def register_page(invite: str = ""):
+        return _register_page(RegisterForm(invite=invite))
+
+    @served.post("/register")
+    def register(
+        invite: str = Form(""),
+        username: str = Form(""),
+        password: str = Form(""),
+        display_name: str = Form(""),
+        time_zone: str = Form(""),
+    ):
+        form = RegisterForm(invite, username, display_name, time_zone)
+        try:
+            user = users.register(invite, username, password, display_name, time_zone.strip())
+        except users.Refused as refused:
+            return _register_page(form, str(refused), status_code=400)
+        return logged_in(user)
+
+    @served.get("/reset", response_class=HTMLResponse)
+    def reset_page(code: str = ""):
+        return _reset_page(code)
+
+    @served.post("/reset")
+    def reset_password(code: str = Form(""), password: str = Form("")):
+        try:
+            user = users.reset_password(code, password)
+        except users.Refused as refused:
+            return _reset_page(code, str(refused), status_code=400)
+        return logged_in(user)
+
+    @served.post(LOGOUT_PATH)
+    def log_out(request: Request):
+        # Ends the session server-side too (on every browser), so a copied cookie stops
+        # working.
+        user = pages.current_user(request)
+        if user is not None:
+            users.end_sessions(user)
+        response = RedirectResponse(LOGIN_PATH, status_code=303)
+        response.delete_cookie(SESSION_COOKIE, httponly=True, secure=secure_cookies, samesite="lax")
+        return response
+
+    owner_panel.install(served)
+
+    @served.get("/password", response_class=HTMLResponse)
+    def password_page(request: Request):
+        if pages.current_user(request) is None:
+            return RedirectResponse(LOGIN_PATH, status_code=303)
+        return _password_page()
+
+    @served.post("/password", response_class=HTMLResponse)
+    def change_password(
+        request: Request, current_password: str = Form(""), new_password: str = Form("")
+    ):
+        user = pages.current_user(request)
+        if user is None:
+            return RedirectResponse(LOGIN_PATH, status_code=303)
+        try:
+            users.change_password(user, current_password, new_password)
+        except users.Refused as refused:
+            return _password_page(str(refused), status_code=400)
+        # Changing it ended every session, this one too; this browser carries on.
+        return with_session(_password_page(changed=True), user)
+
+    @served.get("/profile", response_class=HTMLResponse)
+    def profile_page(request: Request):
+        user = pages.current_user(request)
+        if user is None:
+            return RedirectResponse(LOGIN_PATH, status_code=303)
+        return _profile_page(user.profile)
+
+    @served.post("/profile", response_class=HTMLResponse)
+    def save_profile(
+        request: Request,
+        display_name: str = Form(""),
+        time_zone: str = Form(""),
+        about: str = Form(""),
+    ):
+        user = pages.current_user(request)
+        if user is None:
+            return RedirectResponse(LOGIN_PATH, status_code=303)
+        try:
+            saved = users.update_profile(user, display_name, time_zone, about)
+        except users.Refused as refused:
+            typed = users.Profile(display_name, time_zone, about)
+            return _profile_page(typed, error=str(refused), status_code=400)
+        return _profile_page(saved.profile, saved=True)
+
+    return gr.mount_gradio_app(
+        served,
+        blocks if blocks is not None else chat_ui.build(),
+        path=CHAT_PATH,
+        # Behind ngrok (which sends X-Forwarded-Host), Gradio would otherwise drop /chat
+        # from the links it builds, e.g. to a Chart in an answer.
+        root_path=CHAT_PATH,
+        auth_dependency=_gradio_user,
+        allowed_paths=[str(charts.directory())],
+        footer_links=[],
+    )
+
+
+SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+CROSS_SITE = "Refused: that request came from another site."
+
+
+def _from_this_site(request: Request) -> bool:
+    """Whether a request's Origin (or, without one, its Referer) is this site, i.e. the
+    host the browser addressed (ngrok passes the public Host on). X-Forwarded-Host
+    isn't trusted for this.
+
+    A request with neither header is let through: browsers send Origin with every
+    cross-site POST (and SameSite=Lax keeps the cookie off most of them anyway), so only
+    non-browser clients, which hold no victim's cookie, send neither."""
+    source = request.headers.get("origin") or request.headers.get("referer")
+    if source is None:
+        return True
+    source_host = urlsplit(source).netloc.lower()
+    return bool(source_host) and source_host == request.headers.get("host", "").lower()
+
+
+def _gradio_user(request: Request) -> str | None:
+    """What Gradio knows the User by (its request's `username`): the User's id."""
+    user = pages.current_user(request)
+    return str(user.id) if user else None
+
+
+def _login_page(error: str = "", username: str = "", status_code: int = 200) -> HTMLResponse:
+    body = f"""<h1>Log in to Perry</h1>
+{pages.error_line(error)}
+<form method="post" action="{LOGIN_PATH}">
+  <label>Username <input name="username" autocomplete="username" required autofocus
+         value="{html.escape(username)}"></label>
+  <label>Password <input name="password" type="password" autocomplete="current-password"
+         required></label>
+  <button type="submit">Log in</button>
+</form>
+<p class="notice">Have an Invite? <a href="/register">Register</a></p>
+<p class="notice">Forgot your password? Ask the Owner for a Reset Code, then
+  <a href="/reset">reset it</a>.</p>"""
+    return pages.page("Log in", body, status_code=status_code)
+
+
+@dataclass(frozen=True)
+class RegisterForm:
+    """What the register page shows filled in (never the password)."""
+
+    invite: str = ""
+    username: str = ""
+    display_name: str = ""
+    time_zone: str = ""
+
+
+REGISTER_NOTICE = models.CHAT_DATA_NOTICE
+
+
+def _register_page(form: RegisterForm, error: str = "", status_code: int = 200) -> HTMLResponse:
+    def value(text: str) -> str:
+        return f'value="{html.escape(text)}"'
+
+    body = f"""<h1>Register with Perry</h1>
+<p>You need an Invite from Perry's Owner.</p>
+{pages.error_line(error)}
+<form method="post" action="/register">
+  <label>Invite <input name="invite" required autocomplete="off" {value(form.invite)}></label>
+  <label>Username <input name="username" autocomplete="username" required
+         {value(form.username)}></label>
+  <label>Password (at least {users.MIN_PASSWORD_CHARS} characters)
+    <input name="password" type="password" autocomplete="new-password" required
+           minlength="{users.MIN_PASSWORD_CHARS}"></label>
+  <label>Display name (what Perry calls you)
+    <input name="display_name" autocomplete="name" required {value(form.display_name)}></label>
+  <label>Time zone <input name="time_zone" id="time_zone" required
+         placeholder="e.g. Europe/London" {value(form.time_zone)}></label>
+  <p class="notice">{html.escape(REGISTER_NOTICE)}</p>
+  <button type="submit">Register</button>
+</form>
+<p class="notice">Already registered? <a href="{LOGIN_PATH}">Log in</a></p>
+<script>
+  // Pre-fill the time zone from the browser.
+  const zone = document.getElementById("time_zone");
+  if (!zone.value) zone.value = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+</script>"""
+    return pages.page("Register", body, status_code=status_code)
+
+
+def _reset_page(code: str = "", error: str = "", status_code: int = 200) -> HTMLResponse:
+    body = f"""<h1>Reset your password</h1>
+<p>Forgot your password? Ask Perry's Owner for a Reset Code.</p>
+{pages.error_line(error)}
+<form method="post" action="/reset">
+  <label>Reset Code <input name="code" required autocomplete="off"
+         value="{html.escape(code)}"></label>
+  <label>New password (at least {users.MIN_PASSWORD_CHARS} characters)
+    <input name="password" type="password" autocomplete="new-password" required
+           minlength="{users.MIN_PASSWORD_CHARS}"></label>
+  <button type="submit">Reset password</button>
+</form>
+<p class="notice"><a href="{LOGIN_PATH}">Back to log in</a></p>"""
+    return pages.page("Reset password", body, status_code=status_code)
+
+
+def _profile_page(
+    profile: users.Profile, error: str = "", saved: bool = False, status_code: int = 200
+) -> HTMLResponse:
+    note = pages.error_line(error) or ('<p class="saved" role="status">Saved.</p>' if saved else "")
+    body = f"""<h1>Your Profile</h1>
+<p>Perry reads this when answering you.</p>
+{note}
+<form method="post" action="/profile">
+  <label>Display name <input name="display_name" required autocomplete="name"
+         value="{html.escape(profile.display_name)}"></label>
+  <label>Time zone <input name="time_zone" required placeholder="Europe/London"
+         value="{html.escape(profile.time_zone)}"></label>
+  <label>About you (optional, one line)
+    <input name="about" maxlength="{users.MAX_ABOUT_CHARS}"
+           placeholder="e.g. a second-year chemistry student"
+           value="{html.escape(profile.about)}"></label>
+  <button type="submit">Save</button>
+</form>
+<p><a href="/password">Change your password</a></p>
+<p><a href="{CHAT_PATH}/">Back to Perry</a></p>"""
+    return pages.page("Profile", body, status_code=status_code)
+
+
+def _password_page(error: str = "", changed: bool = False, status_code: int = 200):
+    note = '<p class="saved" role="status">Your password is changed.</p>' if changed else ""
+    body = f"""<h1>Change your password</h1>
+<p>This logs you out on your other devices.</p>
+{pages.error_line(error)}{note}
+<form method="post" action="/password">
+  <label>Current password <input name="current_password" type="password" required
+         autocomplete="current-password"></label>
+  <label>New password (at least {users.MIN_PASSWORD_CHARS} characters)
+    <input name="new_password" type="password" autocomplete="new-password" required
+           minlength="{users.MIN_PASSWORD_CHARS}"></label>
+  <button type="submit">Change password</button>
+</form>
+<p><a href="/profile">Your Profile</a> · <a href="{CHAT_PATH}/">Back to Perry</a></p>"""
+    return pages.page("Change password", body, status_code=status_code)
+
+
+HTTPS_FLAG = "--https"
+
+
+def main(argv: list[str] | None = None) -> None:
+    """Serve Perry on HOST:PORT. With --https (as scripts/serve.py runs it, behind ngrok's
+    HTTPS endpoint), the session cookie is marked Secure."""
+    import sys
+
+    import uvicorn
+
+    from perry import db, ingest, privacy, summaries
+
+    # Before anything runs: switches tracing off if a real account is connected.
+    notice = privacy.startup() or ""
+    if notice:
+        print(notice)
+    argv = sys.argv[1:] if argv is None else argv
+    unknown = [arg for arg in argv if arg != HTTPS_FLAG]
+    if unknown:
+        raise SystemExit(f"Usage: uv run python -m perry.web [{HTTPS_FLAG}]")
+    db.init_schema()
+    try:
+        served = create_app(chat_ui.build(notice), secure_cookies=HTTPS_FLAG in argv)
+    except users.Refused as refused:
+        raise SystemExit(str(refused)) from None
+    # e.g. a changed embedding model, Documents stored before ColBERT, or after a crash.
+    ingest.ensure_indexes_current()
+    # Retry Summaries that failed (e.g. the local model wasn't running) and finish pending ones.
+    summaries.resume()
+    print(f"Perry: http://{HOST}:{PORT}/")
+    uvicorn.run(served, host=HOST, port=PORT)
+
+
+if __name__ == "__main__":
+    main()

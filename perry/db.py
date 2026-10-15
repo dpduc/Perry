@@ -1,4 +1,5 @@
-"""The one Postgres database: Documents, Chunks, Threads, Datasets and LangGraph checkpoints."""
+"""The one Postgres database: Users, Documents, Chunks, Threads, Datasets and LangGraph
+checkpoints."""
 
 import os
 import time
@@ -83,6 +84,63 @@ CREATE TABLE IF NOT EXISTS threads (
     created_at timestamptz NOT NULL DEFAULT now()
 );
 
+-- Users (perry.users). At most one is the Owner. Usernames are unique ignoring case.
+-- Bumping session_version ends every session the User has open.
+CREATE TABLE IF NOT EXISTS users (
+    id              bigserial PRIMARY KEY,
+    username        text NOT NULL,
+    password_hash   text NOT NULL,
+    is_owner        boolean NOT NULL DEFAULT false,
+    disabled        boolean NOT NULL DEFAULT false,
+    display_name    text NOT NULL,
+    time_zone       text NOT NULL,
+    about           text NOT NULL DEFAULT '',
+    session_version int NOT NULL DEFAULT 0,
+    created_at      timestamptz NOT NULL DEFAULT now(),
+    last_login_at   timestamptz
+);
+CREATE UNIQUE INDEX IF NOT EXISTS users_username_idx ON users (lower(username));
+CREATE UNIQUE INDEX IF NOT EXISTS users_one_owner_idx ON users (is_owner) WHERE is_owner;
+-- The User each Thread belongs to. NULL only for Threads from before Users existed,
+-- until create-owner gives them to the Owner.
+ALTER TABLE threads ADD COLUMN IF NOT EXISTS user_id bigint REFERENCES users(id);
+CREATE INDEX IF NOT EXISTS threads_user_idx ON threads (user_id);
+
+-- Invites (perry.users): single-use codes from the Owner that let one person register.
+-- Not tied to a name; used_by is the User who registered with it.
+CREATE TABLE IF NOT EXISTS invites (
+    code         text PRIMARY KEY,
+    created_at   timestamptz NOT NULL,
+    expires_at   timestamptz NOT NULL,
+    used_at      timestamptz,
+    used_by      bigint REFERENCES users(id),
+    withdrawn_at timestamptz
+);
+
+-- Failed logins (perry.users), for the login limit: a few per username per window.
+-- username is lowercased, and need not be a User's.
+CREATE TABLE IF NOT EXISTS failed_logins (
+    username  text NOT NULL,
+    failed_at timestamptz NOT NULL
+);
+CREATE INDEX IF NOT EXISTS failed_logins_idx ON failed_logins (username, failed_at);
+
+-- Reset Codes (perry.users): single-use codes from the Owner that let one User who forgot
+-- their password choose a new one.
+-- Called password_resets before; renamed to match the glossary.
+DO $$ BEGIN
+    IF to_regclass('password_resets') IS NOT NULL AND to_regclass('reset_codes') IS NULL THEN
+        ALTER TABLE password_resets RENAME TO reset_codes;
+    END IF;
+END $$;
+CREATE TABLE IF NOT EXISTS reset_codes (
+    code       text PRIMARY KEY,
+    user_id    bigint NOT NULL REFERENCES users(id),
+    created_at timestamptz NOT NULL,
+    expires_at timestamptz NOT NULL,
+    used_at    timestamptz
+);
+
 -- Datasets are real tables in the analytics schema; this is their registry.
 CREATE SCHEMA IF NOT EXISTS analytics;
 CREATE TABLE IF NOT EXISTS datasets (
@@ -107,6 +165,9 @@ CREATE TABLE IF NOT EXISTS usage_ledger (
 );
 CREATE INDEX IF NOT EXISTS usage_ledger_recorded_at_idx ON usage_ledger (recorded_at);
 CREATE INDEX IF NOT EXISTS usage_ledger_turn_idx ON usage_ledger (turn_id);
+-- The User whose Turn made the call; NULL outside a Turn (e.g. ingestion) and for
+-- calls from before Users existed.
+ALTER TABLE usage_ledger ADD COLUMN IF NOT EXISTS user_id bigint REFERENCES users(id);
 
 -- Facts about the stored data, e.g. which model embedded it (perry.reembed).
 CREATE TABLE IF NOT EXISTS store_facts (

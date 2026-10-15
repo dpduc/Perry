@@ -39,25 +39,37 @@ class EvalThread:
 
     def __init__(self):
         self.thread_id: str | None = None
+        self.user = _eval_owner()
 
     def send(self, message: str) -> str:
         from perry import supervisor, threads
 
         if self.thread_id is None:
-            self.thread_id = threads.create(message)
-        return supervisor.run_turn(self.thread_id, message)
+            self.thread_id = threads.create(self.user, message)
+        return supervisor.run_turn(self.user, self.thread_id, message)
 
     def resume(self, decision):
         """Answer the Confirmation the Turn waits for (Write Actions hit the fake Workspace)."""
         from perry import supervisor
 
-        return supervisor.resume_turn(self.thread_id, decision)
+        return supervisor.resume_turn(self.user, self.thread_id, decision)
 
     def consulted(self) -> list[str]:
         """The Agent tools the Supervisor called during the latest Turn."""
         from perry import supervisor
 
         return supervisor.agents_consulted(self.thread_id) if self.thread_id else []
+
+
+def _eval_owner():
+    """The eval database's Owner, who sends every eval Turn (created on first use)."""
+    import secrets
+
+    from perry import users
+
+    return users.owner() or users.create_owner(
+        "eval-owner", secrets.token_urlsafe(16), "Eval Owner", "UTC"
+    )
 
 
 @contextmanager

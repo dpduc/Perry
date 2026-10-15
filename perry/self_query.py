@@ -10,11 +10,11 @@ Self-query is then plain hybrid search for the question.
 import calendar
 import json
 import re
-from datetime import date, datetime
+from datetime import date
 
 from langchain_core.runnables import chain
 
-from perry import db, models
+from perry import db, models, usage
 from perry.search import DocumentFilter, NoHits, SearchHit, hybrid_search
 
 # How many Documents the prompt lists, so the model can match the user's wording to them.
@@ -47,7 +47,7 @@ def self_query(question: str) -> list[SearchHit]:
     """Hybrid search for the question within the Documents its filter allows; without a
     usable filter, plain hybrid search for the question."""
     prompt = PROMPT.format(
-        today=datetime.now().astimezone().date().isoformat(),
+        today=usage.local_now().date().isoformat(),  # the User's today, in a Turn
         documents=_documents(),
         question=question,
     )
