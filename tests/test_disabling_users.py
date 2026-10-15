@@ -2,6 +2,7 @@
 username, and the Owner lists Users in the Owner panel and disables or re-enables them."""
 
 import datetime
+import html
 import re
 import zoneinfo
 
@@ -118,13 +119,16 @@ def test_failed_logins_older_than_the_window_are_deleted(client, monkeypatch, da
 def users_listed(owner_client) -> list[dict]:
     """The rows of the Owner panel's Users table: username, joined, last login, status."""
     page = owner_client.get("/owner").text
-    rows = re.findall(r'<tr data-user="\d+">(.*?)</tr>', page, flags=re.DOTALL)
-    keys = ("username", "joined", "last_login", "status")
-    return [dict(zip(keys, cells(row), strict=False)) for row in rows]
+    rows = re.findall(r'<tr data-user="\d+" data-username="([^"]*)">(.*?)</tr>', page, re.DOTALL)
+    keys = ("joined", "last_login", "status")
+    return [
+        {"username": html.unescape(name), **dict(zip(keys, cells(row)[1:], strict=False))}
+        for name, row in rows
+    ]
 
 
 def cells(row: str) -> list[str]:
-    found = re.findall(r"<td>(.*?)</td>", row, flags=re.DOTALL)
+    found = re.findall(r"<td[^>]*>(.*?)</td>", row, flags=re.DOTALL)
     return [re.sub(r"<[^>]+>", "", cell).strip() for cell in found]
 
 

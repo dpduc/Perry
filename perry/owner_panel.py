@@ -100,17 +100,63 @@ def back_to_panel(error: str = "") -> RedirectResponse:
 @router.get("", response_class=HTMLResponse)
 def panel(owner: Annotated[users.User, Depends(owner_only)], error: str = ""):
     sections = "\n".join(render(owner) for render in SECTIONS)
-    body = f"""<h1>Owner panel</h1>
-<p><a href="{pages.CHAT_PATH}/">Back to Perry</a></p>
+    body = f"""<a class="back" href="{pages.CHAT_PATH}/">&larr; Back to Perry</a>
+<h1>Owner panel</h1>
+<p class="hint">Times are in your time zone, {html.escape(owner.profile.time_zone)}.</p>
 {pages.error_line(ERRORS.get(error, ""))}
-{sections}"""
+{sections}
+<script>{SCRIPT}</script>"""
     return pages.page("Owner panel", body, wide=True)
 
 
+# Copy buttons put the full link on the clipboard; a form with data-confirm asks first.
+SCRIPT = """
+document.addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-copy]");
+  if (!button) return;
+  const link = new URL(button.dataset.copy, location.origin).href;
+  try {
+    await navigator.clipboard.writeText(link);
+  } catch {
+    prompt("Copy this link:", link);
+    return;
+  }
+  const label = button.textContent;
+  button.textContent = "Copied \\u2713";
+  button.disabled = true;
+  setTimeout(() => { button.textContent = label; button.disabled = false; }, 1600);
+});
+document.addEventListener("submit", (event) => {
+  const question = event.target.dataset.confirm;
+  if (question && !confirm(question)) event.preventDefault();
+});
+"""
+
+
+def panel_section(title: str, hint: str, content: str, button: str = "") -> str:
+    """A section: its heading (with an optional button beside it), a line saying what
+    it is for, and its content."""
+    return f"""<section><div class="section-head"><h2>{title}</h2>{button}</div>
+<p class="hint">{hint}</p>
+{content}
+</section>"""
+
+
+def table(headings: list[str], rows: str) -> str:
+    """A table under these column headings; an empty heading is the column of buttons."""
+    head = "".join(f'<th class="actions">{h}</th>' if not h else f"<th>{h}</th>" for h in headings)
+    return f'<div class="table-wrap"><table><tr>{head}</tr>{rows}</table></div>'
+
+
+def empty(text: str) -> str:
+    """What a section shows when it has nothing to list."""
+    return f'<p class="empty">{text}</p>'
+
+
 def local_time(moment, owner: users.User) -> str:
-    """`moment` in the Owner's time zone, to the minute."""
+    """`moment` in the Owner's time zone, to the minute (the panel names the zone once)."""
     shown = moment.astimezone(zoneinfo.ZoneInfo(owner.profile.time_zone))
-    return f"{shown:%Y-%m-%d %H:%M} ({html.escape(owner.profile.time_zone)})"
+    return f"{shown:%Y-%m-%d %H:%M}"
 
 
 # Invites
@@ -120,22 +166,22 @@ def local_time(moment, owner: users.User) -> str:
 def invites_section(owner: users.User) -> str:
     rows = "\n".join(
         f"""<tr><td><code data-invite="{html.escape(invite.code)}">{html.escape(invite.code)}</code></td>
-  <td><a href="/register?invite={quote(invite.code)}">register link</a></td>
-  <td>{local_time(invite.expires_at, owner)}</td>
-  <td><form method="post" action="{PATH}/invites/{quote(invite.code)}/withdraw">
-    <button class="small" type="submit">Withdraw</button></form></td></tr>"""
+  <td class="when" data-label="Expires">{local_time(invite.expires_at, owner)}</td>
+  <td class="actions"><button class="small secondary" type="button"
+      data-copy="/register?invite={quote(invite.code)}">Copy link</button><form method="post"
+      action="{PATH}/invites/{quote(invite.code)}/withdraw"><button class="small danger"
+      type="submit">Withdraw</button></form></td></tr>"""
         for invite in users.open_invites()
     )
-    table = (
-        f"<table><tr><th>Invite</th><th></th><th>Expires</th><th></th></tr>{rows}</table>"
+    content = (
+        table(["Invite", "Expires", ""], rows)
         if rows
-        else "<p>No unused Invites.</p>"
+        else empty("No unused Invites. Create one, then send its link to the person you invite.")
     )
-    return f"""<section><h2>Invites</h2>
-<p>Each Invite lets one person register, and expires after {users.INVITE_DAYS} days.</p>
-{table}
-<form method="post" action="{PATH}/invites"><button type="submit">Create an Invite</button></form>
-</section>"""
+    create = f"""<form method="post" action="{PATH}/invites">
+  <button class="small" type="submit">Create an Invite</button></form>"""
+    hint = f"Each Invite lets one person register, and expires after {users.INVITE_DAYS} days."
+    return panel_section("Invites", hint, content, button=create)
 
 
 @router.post("/invites")
@@ -156,36 +202,40 @@ def withdraw_invite(code: str):
 @section
 def users_section(owner: users.User) -> str:
     rows = "\n".join(_user_row(listing, owner) for listing in users.all_users())
-    return f"""<section><h2>Users</h2>
-<p>A disabled User can't log in, and is logged out at once. Their Threads and usage are kept.</p>
-<table><tr><th>Username</th><th>Joined</th><th>Last login</th><th>Status</th><th></th></tr>
-{rows}</table>
-</section>"""
+    hint = "A disabled User can't log in, and is logged out at once. Their Threads and usage are kept."
+    return panel_section("Users", hint, table(["User", "Joined", "Last login", "Status", ""], rows))
 
 
 def _user_row(listing: users.UserListing, owner: users.User) -> str:
     user = listing.user
+    name = html.escape(user.username)
     last_login = local_time(listing.last_login_at, owner) if listing.last_login_at else "never"
+    status = "disabled" if user.disabled else "active"
     if user.is_owner:
-        status, action = "active", "Owner"
+        buttons = ""
     elif user.disabled:
-        status, action = "disabled", _user_button(user, "enable", "Re-enable")
+        buttons = _user_button(user, "enable", "Re-enable", "secondary")
     else:
-        status = "active"
-        action = _user_button(user, "disable", "Disable") + _user_button(
-            user, "reset", "Reset Code"
+        disable_question = (
+            f"Disable {user.username}? They are logged out at once, "
+            "and can't log in until you re-enable them."
         )
-    return f"""<tr data-user="{user.id}">
-  <td>{html.escape(user.username)}</td>
-  <td>{local_time(listing.joined_at, owner)}</td>
-  <td>{last_login}</td>
-  <td>{status}</td>
-  <td>{action}</td></tr>"""
+        buttons = _user_button(user, "reset", "Reset Code", "secondary") + _user_button(
+            user, "disable", "Disable", "danger", confirm=disable_question
+        )
+    badge = '<span class="badge">Owner</span>' if user.is_owner else ""
+    return f"""<tr data-user="{user.id}" data-username="{name}">
+  <td>{name}{badge}</td>
+  <td class="when" data-label="Joined">{local_time(listing.joined_at, owner)}</td>
+  <td class="when" data-label="Last login">{last_login}</td>
+  <td><span class="status {status}">{status}</span></td>
+  <td class="actions">{buttons}</td></tr>"""
 
 
-def _user_button(user: users.User, action: str, label: str) -> str:
-    return f"""<form method="post" action="{PATH}/users/{user.id}/{action}">
-    <button class="small" type="submit">{label}</button></form>"""
+def _user_button(user: users.User, action: str, label: str, kind: str, confirm: str = "") -> str:
+    asks = f' data-confirm="{html.escape(confirm)}"' if confirm else ""
+    return f"""<form method="post" action="{PATH}/users/{user.id}/{action}"{asks}><button
+    class="small {kind}" type="submit">{label}</button></form>"""
 
 
 @router.post("/users/{user_id}/disable")
@@ -221,17 +271,19 @@ def reset_codes_section(owner: users.User) -> str:
         f"""<tr data-reset="{html.escape(reset.code)}">
   <td>{html.escape(reset.username)}</td>
   <td><code>{html.escape(reset.code)}</code></td>
-  <td><a href="/reset?code={quote(reset.code)}">reset link</a></td>
-  <td>{local_time(reset.expires_at, owner)}</td></tr>"""
+  <td class="when" data-label="Expires">{local_time(reset.expires_at, owner)}</td>
+  <td class="actions"><button class="small secondary" type="button"
+      data-copy="/reset?code={quote(reset.code)}">Copy link</button></td></tr>"""
         for reset in users.open_reset_codes()
     )
-    table = (
-        f"<table><tr><th>User</th><th>Reset Code</th><th></th><th>Expires</th></tr>{rows}</table>"
+    content = (
+        table(["User", "Reset Code", "Expires", ""], rows)
         if rows
-        else "<p>No unused Reset Codes.</p>"
+        else empty("No unused Reset Codes. Issue one from the User's row above.")
     )
-    return f"""<section><h2>Reset Codes</h2>
-<p>A Reset Code lets a User who forgot their password choose a new one, and logs them out
-everywhere. Give it to them yourself; it expires after {users.RESET_CODE_HOURS} hours.</p>
-{table}
-</section>"""
+    hint = (
+        "A Reset Code lets a User who forgot their password choose a new one, and logs them "
+        "out everywhere. Give it to them yourself; it expires after "
+        f"{users.RESET_CODE_HOURS} hours."
+    )
+    return panel_section("Reset Codes", hint, content)

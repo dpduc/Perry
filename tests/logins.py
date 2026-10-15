@@ -1,6 +1,7 @@
 """Logging in, for tests: through the login page, or as a Gradio request for a handler.
 Also the Owner panel's Invites and the register page, as a browser uses them."""
 
+import html
 import re
 
 import gradio as gr
@@ -60,5 +61,6 @@ def is_logged_in(client) -> bool:
 def user_id_of(owner_client, username: str) -> str:
     """The id of the User the Owner panel lists with this username."""
     page = owner_client.get("/owner").text
-    (found,) = re.findall(rf'<tr data-user="(\d+)">\s*<td>{re.escape(username)}</td>', page)
+    name = re.escape(html.escape(username))
+    (found,) = re.findall(rf'<tr data-user="(\d+)" data-username="{name}">', page)
     return found

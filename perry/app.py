@@ -248,6 +248,11 @@ def read_aloud(
     return speech.audio
 
 
+def show_if_spoken(audio):
+    """Show the answer player only when there is an answer to play."""
+    return gr.Audio(visible=audio is not None)
+
+
 def _text(content) -> str:
     """A chat message's text: Gradio passes content as a str or a list of parts."""
     if isinstance(content, str):
@@ -475,7 +480,10 @@ def build(privacy_notice: str = "") -> gr.Blocks:
                 format="wav",
                 label="Push to talk: record, then stop to send",
             )
-            speaker = gr.Audio(label="Perry's answer", autoplay=True, interactive=False)
+            # Hidden until there is a spoken answer to play.
+            speaker = gr.Audio(
+                label="Perry's answer", autoplay=True, interactive=False, visible=False
+            )
 
         status_outputs = [google, usage_status]
 
@@ -502,6 +510,7 @@ def build(privacy_notice: str = "") -> gr.Blocks:
             .then(hear, [mic, chatbot, thread_id], [pending, chatbot, mic, heard])
             .then(answer, [pending, chatbot, thread_id, technique, heard], answer_outputs)
             .then(read_aloud, [heard, chatbot, thread_id], speaker)
+            .then(show_if_spoken, speaker, speaker)
         )
         during_turn(
             approve_button.click(lock_threads, None, switching).then(
@@ -515,6 +524,8 @@ def build(privacy_notice: str = "") -> gr.Blocks:
         )
         thread_picker.input(open_thread, thread_picker, [chatbot, thread_id, *card_outputs])
         new_button.click(new_thread, None, [chatbot, thread_id, thread_picker, *card_outputs])
+        for switch in (thread_picker.input, new_button.click):
+            switch(lambda: gr.Audio(value=None, visible=False), None, speaker)
         then_refresh_status(
             uploader.upload(
                 propose_upload, uploader, [uploaded, upload_status, upload_choice]
