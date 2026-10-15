@@ -3,12 +3,15 @@ same benchmark questions, each answer scored for correctness, Citation accuracy 
 
 A *setup* is one grid row group: a technique's name (that technique forced through the
 per-request override) or a picking mode (logical, semantic, cascade). Always-hybrid is
-hybrid search forced, so it is the `hybrid_search` setup, not a separate one.
+hybrid search forced, so it is the `hybrid_search` setup, not a separate one. Any setup
+can also run with its Chunks reranked, named with a "+rerank" suffix (e.g.
+`cascade+rerank`); the setup without it runs with reranking off.
 
 Perry modules are imported inside functions: the benchmark points DATABASE_URL at its own
 database before anything from Perry is imported (see `benchmark.run`).
 """
 
+import contextlib
 import json
 import time
 from collections.abc import Callable
@@ -36,9 +39,11 @@ Ask = Callable[[str, str], Answer]  # (setup, question) -> Answer
 # as its one tool) is exactly hybrid search forced, so it shares that setup and its cost.
 ALWAYS_HYBRID = "hybrid_search"
 _ALIASES = {"always-hybrid": ALWAYS_HYBRID, "always_hybrid": ALWAYS_HYBRID}
+# The suffix that runs a setup with its Chunks reranked.
+RERANK = "+rerank"
 # Ledger kinds that aren't the chat model, left out of a row's "model" ("pick" is semantic
 # picking's embeddings).
-_NOT_CHAT = ("embedding", "colbert", "pick")
+_NOT_CHAT = ("embedding", "colbert", "pick", "rerank")
 
 
 def picking_modes() -> tuple[str, ...]:
@@ -55,17 +60,33 @@ def setups() -> list[str]:
     return [*(t.name for t in techniques.TECHNIQUES), *picking_modes()]
 
 
+def base(setup: str) -> str:
+    """The technique or picking mode a setup runs, without its "+rerank"."""
+    return setup.removesuffix(RERANK)
+
+
+def reranked(setup: str) -> bool:
+    return setup.endswith(RERANK)
+
+
 def select(only: list[str] | None) -> list[str]:
-    """The setups named in `only` (all of them if None), in grid order. Raises ValueError
-    for a name that is neither a technique nor a picking mode."""
+    """The setups named in `only` (all of them if None), in grid order, each one's
+    reranked run after its plain one. Raises ValueError for a name that is neither a
+    technique nor a picking mode, with or without "+rerank"."""
     every = setups()
     if not only:
         return every
-    named = {_ALIASES.get(name, name) for name in only}
-    unknown = sorted(named - set(every))
+    named = {
+        _ALIASES.get(base(name), base(name)) + (RERANK if reranked(name) else "")
+        for name in only
+    }
+    unknown = sorted(name for name in named if base(name) not in every)
     if unknown:
-        raise ValueError(f"Unknown setups {unknown}; choose from {every} or always-hybrid")
-    return [setup for setup in every if setup in named]
+        raise ValueError(
+            f"Unknown setups {unknown}; choose from {every} or always-hybrid, "
+            f"each optionally with {RERANK}"
+        )
+    return [run for setup in every for run in (setup, setup + RERANK) if run in named]
 
 
 class NotReady(Exception):
@@ -78,11 +99,11 @@ def _needs_summaries(setups: list[str]) -> bool:
     from perry import techniques
 
     summary_based = {t.name for t in techniques.TECHNIQUES if t.summary_kind}
-    return any(s in summary_based or s in picking_modes() for s in setups)
+    return any(base(s) in summary_based or base(s) in picking_modes() for s in setups)
 
 
 def _needs_colbert(setups: list[str]) -> bool:
-    return any(s == "colbert" or s in picking_modes() for s in setups)
+    return any(base(s) == "colbert" or base(s) in picking_modes() for s in setups)
 
 
 def prepare(setups: list[str], documents: list[Path]) -> None:
@@ -103,6 +124,11 @@ def prepare(setups: list[str], documents: list[Path]) -> None:
         raise NotReady(
             "ColBERT has no encoder: PERRY_COLBERT_MODEL is empty. Unset it to use "
             f"{models.DEFAULT_COLBERT_MODEL}."
+        )
+    if any(map(reranked, setups)) and not models.reranking_supported():
+        raise NotReady(
+            "These setups rerank, but there is no reranker: PERRY_RERANK_MODEL is empty. "
+            f"Unset it to use {models.DEFAULT_RERANK_MODEL}."
         )
     ensure_indexes_current()  # e.g. Documents stored before ColBERT or a model change
     if not _needs_summaries(setups):
@@ -132,8 +158,10 @@ def ask_perry(setup: str, question: str) -> Answer:
     from perry import models, usage
     from perry.agents import knowledge
 
-    forced, mode = (None, setup) if setup in picking_modes() else (setup, None)
-    with usage.turn(None, f"benchmark-{setup}") as turn:
+    run = base(setup)
+    forced, mode = (None, run) if run in picking_modes() else (run, None)
+    reranking = contextlib.nullcontext() if reranked(setup) else models.without_reranker()
+    with reranking, usage.turn(None, f"benchmark-{setup}") as turn:
         try:
             findings = knowledge.find(question, forced, picking_mode=mode)
             text = knowledge.with_found_with(findings.text, findings.found_with)
@@ -235,6 +263,8 @@ def run_grid(
 
 
 def label(setup: str) -> str:
+    if reranked(setup):
+        return f"{label(base(setup))} + reranking"
     if setup in picking_modes():
         return f"picking: {setup}"
     if setup == ALWAYS_HYBRID:

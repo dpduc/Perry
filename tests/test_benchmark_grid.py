@@ -6,6 +6,7 @@ from datetime import date
 import pytest
 from fakes import (
     FakeColbert,
+    FakeReranker,
     FakeSummaryModel,
     ScriptedChatModel,
     call,
@@ -228,6 +229,30 @@ def test_a_run_can_be_limited_to_named_setups_and_always_hybrid_is_hybrid_search
         grid.select(["no_such"])
 
 
+def test_any_setup_can_be_run_reranked_and_plain_setups_are_not():
+    assert grid.select(["cascade+rerank", "hybrid_search+rerank", "cascade"]) == [
+        "hybrid_search+rerank",
+        "cascade",
+        "cascade+rerank",
+    ]
+    assert grid.select(["always-hybrid+rerank"]) == ["hybrid_search+rerank"]
+    assert len(grid.setups()) == 13  # the full grid stays as it was
+    with pytest.raises(ValueError, match="no_such"):
+        grid.select(["no_such+rerank"])
+
+
+def test_a_reranked_setup_reranks_and_its_plain_setup_does_not(budget):
+    with models.use(fake_provider(budget.model, reranker=FakeReranker())):
+        budget.script(call("hybrid_search", question=BUDGET_QUESTION), last_message)
+        reranked = grid.ask_perry("hybrid_search+rerank", BUDGET_QUESTION)
+        budget.script(call("hybrid_search", question=BUDGET_QUESTION), last_message)
+        plain = grid.ask_perry("hybrid_search", BUDGET_QUESTION)
+
+    assert reranked.found_with == ("Hybrid search, reranked (forced)",)
+    assert plain.found_with == ("Hybrid search (forced)",)
+    assert reranked.model == "scripted"  # the chat model only, not the reranker
+
+
 # --- Preparing the benchmark Documents --------------------------------------------------
 
 
@@ -285,6 +310,11 @@ def test_a_run_that_needs_summaries_refuses_to_start_if_summarising_fails(databa
 def test_colbert_needs_its_encoder(database, corpus):
     with using(), pytest.raises(grid.NotReady, match="ColBERT"):
         grid.prepare(["colbert"], corpus)
+
+
+def test_a_reranked_setup_needs_a_reranker(database, corpus):
+    with using(), pytest.raises(grid.NotReady, match="PERRY_RERANK_MODEL"):
+        grid.prepare(["hybrid_search+rerank"], corpus)
 
 
 def test_a_hybrid_search_run_does_not_wait_for_summaries(database, corpus):

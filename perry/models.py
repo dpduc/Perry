@@ -508,6 +508,14 @@ def use(provider: Provider) -> Iterator[Provider]:
         _override = previous
 
 
+@contextmanager
+def without_reranker() -> Iterator[Provider]:
+    """The current provider with no reranker until the block exits, so searches keep
+    their technique's own order (e.g. the benchmark's un-reranked setups)."""
+    with use(replace(_provider(), reranker=None)) as provider:
+        yield provider
+
+
 def text_generation_is_local() -> bool:
     """Whether the configured text-generation provider runs locally (Gemini doesn't)."""
     return _provider().local_text_generation

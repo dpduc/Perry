@@ -89,6 +89,10 @@ _Avoid_: Source, reference
 One way the Knowledge Agent can find Chunks for a question, such as rewriting it into several queries, searching with a hypothetical answer, or searching Summaries. Every Retrieval Technique ends in Chunks with Citations.
 _Avoid_: RAG technique, retriever, search mode
 
+**Reranking**:
+The step after every Retrieval Technique that reads the question with each Chunk the technique found and keeps the few that answer it best, best first. It is not a Retrieval Technique: it finds no Chunks of its own.
+_Avoid_: Rerank technique, re-ranker stage, re-scoring
+
 **Question Decomposition**:
 The Retrieval Technique that splits one question into sub-questions, finds Chunks for each, and answers from all of them together.
 _Avoid_: Decomposition (on its own), task decomposition, sub-querying

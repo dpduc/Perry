@@ -2,7 +2,13 @@
 
 import pytest
 
-from benchmark.run import answer_all, load_answers, render_report, summarise
+from benchmark.run import (
+    answer_all,
+    load_answers,
+    render_report,
+    retrieval_report,
+    summarise,
+)
 from benchmark.scoring import Question
 
 
@@ -81,3 +87,23 @@ def test_report_shows_the_per_type_comparison_and_every_answer():
     assert "| lookup | perry | 1/2 | 100% |" in report
     assert "| lookup | qabot | 0/2 |" in report
     assert "question L1?" in report
+
+
+def test_the_retrieval_report_compares_hybrid_search_with_reranked_page_recall():
+    plain = {"L1": {"a.pdf#page=1"}, "L2": {"x.pdf#page=9"}, "M1": set()}
+    reranked = {"L1": {"a.pdf#page=1"}, "L2": {"a.pdf#page=3"}, "M1": {"b.pdf#page=2"}}
+
+    report = retrieval_report(QUESTIONS, 6, plain, reranked)
+
+    assert "| lookup | 2 | 50% | 1/2 | 100% | 2/2 |" in report
+    assert "| all | 3 | 33% | 1/3 | 100% | 3/3 |" in report
+    assert "| L2 | 0% | a.pdf#page=3 | 100% | - |" in report
+
+
+def test_without_a_reranker_the_retrieval_report_shows_hybrid_search_alone():
+    plain = {"L1": {"a.pdf#page=1"}, "L2": set(), "M1": set()}
+
+    report = retrieval_report(QUESTIONS, 6, plain, None)
+
+    assert "| lookup | 2 | 50% | 1/2 |" in report
+    assert "Reranked" not in report

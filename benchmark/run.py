@@ -3,7 +3,8 @@
     uv run python -m benchmark.run qabot           # ingest + answer with QA-bot
     uv run python -m benchmark.run perry           # ingest + answer with Perry
     uv run python -m benchmark.run report          # score both -> results/RESULTS.md
-    uv run python -m benchmark.run perry-retrieval # no chat model: page recall of hybrid search
+    uv run python -m benchmark.run perry-retrieval # no chat model: page recall of hybrid search,
+                                    # without and with reranking
     uv run python -m benchmark.run grid [--only SETUP,...] [--rerun] [--yes]
                                     # every Retrieval Technique forced and every picking
                                     # mode -> results/grid.jsonl and results/GRID.md
@@ -214,37 +215,88 @@ def run_perry(questions: list[Question]) -> None:
 
 
 def run_perry_retrieval(questions: list[Question], limit: int = 6) -> str:
-    """Page recall of hybrid search alone: which required pages are in the top hits."""
+    """Page recall of hybrid search alone: which required pages are in the top hits, as
+    hybrid search ranks them and, if there is a reranker, as it reranks a wider pool."""
     ingest_perry()
+    from perry import models, techniques
     from perry.search import hybrid_search
+
+    with models.without_reranker():
+        plain = {
+            q.id: {hit.citation for hit in hybrid_search(q.question, limit=limit)}
+            for q in questions
+        }
+    reranked = None
+    if models.reranking_supported():
+        hybrid = techniques.get("hybrid_search")
+        reranked = {
+            q.id: {hit.citation for hit in techniques.search(hybrid, q.question).hits}
+            for q in questions
+        }
+    return retrieval_report(questions, limit, plain, reranked)
+
+
+def retrieval_report(
+    questions: list[Question],
+    limit: int,
+    plain: dict[str, set[str]],
+    reranked: dict[str, set[str]] | None,
+) -> str:
+    """The retrieval-only report: page recall per question type and per question, for
+    hybrid search's own top hits and, if given, the reranked ones."""
+    runs = [("Hybrid search", plain)] + ([("Reranked", reranked)] if reranked else [])
+
+    def recall(found: set[str], q: Question) -> float:
+        return len(found & set(q.pages)) / len(q.pages)
 
     lines = [
         "# Perry retrieval only (no chat model)",
         "",
         (
-            f"Share of required source pages among the top {limit} hybrid-search hits "
-            "for the question as asked. The Knowledge Agent may rephrase and search up "
-            "to 3 times, so this is a lower bound on what it sees."
+            f"Share of required source pages among the top {limit} hits for the question as "
+            "asked: hybrid search's own top hits"
+            + (
+                f", and the top {limit} the reranker picks from a wider pool of hybrid "
+                "search's hits"
+                if reranked
+                else ""
+            )
+            + ". The Knowledge Agent may rephrase and search up to 3 times, so this is a "
+            "lower bound on what it sees."
         ),
         "",
-        "| Type | Questions | Page recall | All pages found |",
-        "|---|---|---|---|",
-    ]
-    rows = []
-    for q in questions:
-        found = {hit.citation for hit in hybrid_search(q.question, limit=limit)}
-        recall = len(found & set(q.pages)) / len(q.pages)
-        rows.append((q, recall, sorted(found)))
-    for qtype in (*QUESTION_TYPES, "all"):
-        group = [(q, r) for q, r, _ in rows if qtype in ("all", q.type)]
-        lines.append(
-            f"| {qtype} | {len(group)} | {_pct(_mean([r for _, r in group]))} "
-            f"| {sum(r == 1.0 for _, r in group)}/{len(group)} |"
+        "| Type | Questions | "
+        + " | ".join(
+            f"{name}: page recall | {name}: all pages found" for name, _ in runs
         )
-    lines += ["", "| Question | Page recall | Missing pages |", "|---|---|---|"]
-    for q, recall, found in rows:
-        missing = ", ".join(p for p in q.pages if p not in found) or "-"
-        lines.append(f"| {q.id} | {_pct(recall)} | {missing} |")
+        + " |",
+        "|---|---|" + "---|---|" * len(runs),
+    ]
+    for qtype in (*QUESTION_TYPES, "all"):
+        group = [q for q in questions if qtype in ("all", q.type)]
+        if not group:
+            continue
+        cells = []
+        for _, found in runs:
+            recalls = [recall(found[q.id], q) for q in group]
+            cells += [
+                _pct(_mean(recalls)),
+                f"{sum(r == 1.0 for r in recalls)}/{len(group)}",
+            ]
+        lines.append(f"| {qtype} | {len(group)} | {' | '.join(cells)} |")
+    lines += [
+        "",
+        "| Question | "
+        + " | ".join(f"{name}: page recall | {name}: missing pages" for name, _ in runs)
+        + " |",
+        "|---|" + "---|---|" * len(runs),
+    ]
+    for q in questions:
+        cells = []
+        for _, found in runs:
+            missing = ", ".join(p for p in q.pages if p not in found[q.id]) or "-"
+            cells += [_pct(recall(found[q.id], q)), missing]
+        lines.append(f"| {q.id} | {' | '.join(cells)} |")
     return "\n".join(lines) + "\n"
 
 
@@ -285,7 +337,12 @@ def run_qabot(questions: list[Question]) -> None:
 
 
 def run_grid(
-    questions: list[Question], only: list[str] | None, rerun: bool, *, yes: bool = False, ask=input
+    questions: list[Question],
+    only: list[str] | None,
+    rerun: bool,
+    *,
+    yes: bool = False,
+    ask=input,
 ) -> None:
     """The technique grid (see benchmark/grid.py) in the benchmark's own database, every
     Turn on the one paid model (PERRY_BENCHMARK_LLM_MODEL) so rows never mix two models.
@@ -336,7 +393,8 @@ def main(argv: list[str]) -> None:
     parser.add_argument(
         "--only",
         help="grid: comma-separated setups (technique names, semantic, logical, cascade, "
-        "always-hybrid); the rest of the grid's rows are kept",
+        "always-hybrid), each optionally with +rerank (e.g. cascade+rerank); the rest of "
+        "the grid's rows are kept",
     )
     parser.add_argument(
         "--rerun", action="store_true", help="grid: ask the selected setups afresh"

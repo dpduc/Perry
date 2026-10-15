@@ -8,7 +8,7 @@ A personal multi-agent assistant that runs on your own machine. You talk to one 
 
 | Agent | What it does for you |
 |---|---|
-| **Knowledge Agent** | Answers questions from the Documents you upload (PDF, Markdown, text) and cites the exact page each claim came from. Picks one of ten Retrieval Techniques per question and says which one it used: hybrid search (pgvector + Postgres full-text, the baseline); Multi-query and RAG fusion, which rewrite the question into several hybrid searches; Question Decomposition, which splits a comparing or chaining question into sub-questions; Step-back, which also searches a broader version of "why" questions; HyDE, which searches with a hypothetical answer; Self-query, which limits the search to the Documents the question names (by name, file type, upload date, page, Document date or topic); Document Summaries and RAPTOR (summaries of related Chunks up to themes across Documents), both written in the background by a local model; and ColBERT, a local late-interaction model with its own on-disk index, for exact names and rare terms. Scanned PDF pages with no text are read by the vision model at upload. |
+| **Knowledge Agent** | Answers questions from the Documents you upload (PDF, Markdown, text) and cites the exact page each claim came from. Picks one of ten Retrieval Techniques per question and says which one it used: hybrid search (pgvector + Postgres full-text, the baseline); Multi-query and RAG fusion, which rewrite the question into several hybrid searches; Question Decomposition, which splits a comparing or chaining question into sub-questions; Step-back, which also searches a broader version of "why" questions; HyDE, which searches with a hypothetical answer; Self-query, which limits the search to the Documents the question names (by name, file type, upload date, page, Document date or topic); Document Summaries and RAPTOR (summaries of related Chunks up to themes across Documents), both written in the background by a local model; and ColBERT, a local late-interaction model with its own on-disk index, for exact names and rare terms. Whichever technique runs, a local cross-encoder then reranks what it found and keeps the 6 Chunks that best answer the question (*reranked* on the answer's Found-with line). Scanned PDF pages with no text are read by the vision model at upload. |
 | **Analysis Agent** | Answers questions about your Datasets (CSV, or each sheet of an XLSX). It writes read-only SQL and shows you the query it ran. When SQL isn't enough (statistics, forecasts, charts) it writes Python that runs in a locked-down Docker **Sandbox**, and the charts appear in the chat. |
 | **Task Agent** | Reads your Google Calendar and Gmail freely. Anything that changes something or reaches another person (send, reply, create, move or delete an event) waits for you on a **Confirmation card**, where you approve, edit the fields, or reject with a note. |
 
@@ -238,7 +238,14 @@ uv run python -m benchmark.run grid --only hyde --rerun           # ask hyde afr
 uv run python -m benchmark.run grid-report                        # redraw the table only
 ```
 
-`--only` takes technique names, picking modes and `always-hybrid`. Other setups' rows are kept. Rows are saved to `benchmark/results/grid.jsonl` as they arrive, so a run that stops (e.g. quota) resumes where it stopped; `--rerun` drops the selected setups' rows first.
+`--only` takes technique names, picking modes and `always-hybrid`. Other setups' rows are kept. Plain setups run with Reranking off; add `+rerank` to run a setup with it (ADR-0005), e.g. to compare the two:
+
+```bash
+uv run python -m benchmark.run perry-retrieval   # free: page recall of hybrid search, without and with Reranking
+uv run python -m benchmark.run grid --only hybrid_search,hybrid_search+rerank,cascade,cascade+rerank   # 92 Turns, about $0.26
+```
+
+Rows are saved to `benchmark/results/grid.jsonl` as they arrive, so a run that stops (e.g. quota) resumes where it stopped; `--rerun` drops the selected setups' rows first.
 
 **Reading the table** (`benchmark/results/GRID.md`): *Overall* has one line per setup, with how many questions it answered, *Correct* (every expected fact present), fact recall, *Citation recall* (share of required pages cited), *Citation precision* (share of cited pages that are right), cost per question and in total (from the Usage Ledger: paid calls only cost; local ones are free), and the model and run date of its rows. A setup whose date is older than a change you made is stale: rerun it. The *per question type* tables show the same measures for lookup, multi-hop, thematic and entity questions, which is where techniques differ. *Per question* shows each setup's fact recall per question, with `c` when every required page is cited. Picking-mode rows also record, in `grid.jsonl`, which technique the mode chose for each question (`found_with`).
 
@@ -266,6 +273,7 @@ All optional; add any of these to `.env` to override the default.
 | `PERRY_TURN_TOKEN_CEILING` | `50000` | A Turn stops and reports its findings past this many tokens |
 | `PERRY_DAILY_CAP_USD` | `0.50` | New Turns and ingestion are refused past this until local midnight |
 | `PERRY_COLBERT_MODEL` | `answerdotai/answerai-colbert-small-v1` | Local model for the ColBERT Retrieval Technique (downloaded on first use, runs on the CPU); changing it re-encodes every Chunk at next start; empty turns ColBERT off |
+| `PERRY_RERANK_MODEL` | `cross-encoder/ms-marco-MiniLM-L6-v2` | Local cross-encoder for Reranking every search's Chunks (downloaded on first use, runs on the CPU, English); `BAAI/bge-reranker-v2-m3` for other languages (slower); empty turns Reranking off |
 | `PERRY_SHOW_FOUND_WITH` | `true` | End answers from your Documents with the "Found with" line naming the Retrieval Technique; `false` turns it off |
 | `PERRY_PICKING_MODE` | `cascade` | How the Knowledge Agent picks a Retrieval Technique: `semantic` (nearest example questions), `logical` (the model chooses from the descriptions) or `cascade` (semantic when clearly closest, else logical). The sidebar's forced technique wins over all of them |
 | `PERRY_CASCADE_MARGIN` | `0.116` | How much nearer (cosine similarity) the closest technique's examples must be than the runner-up's for `cascade` to pick semantically; tuned on the eval set, never the benchmark (see [Eval set](#eval-set)) |
