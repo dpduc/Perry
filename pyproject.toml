@@ -26,6 +26,7 @@ dependencies = [
     "langchain-openai>=1.7.0",
     "argon2-cffi>=25.1.0",
     "itsdangerous>=2.2.0",
+    "tzlocal>=5.4.4",
 ]
 
 # ColBERT runs on the CPU: without this, uv pulls the ~2.5 GB CUDA build of torch.
