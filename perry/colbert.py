@@ -22,6 +22,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
+from psycopg.conninfo import conninfo_to_dict
 
 from perry import db, models, paths
 from perry.search import NoHits, SearchHit, default_limit
@@ -41,8 +42,10 @@ _open: dict[Path, tuple] = {}  # live folder -> its open PLAID index and Chunk i
 
 
 def folder() -> Path:
-    """Where the ColBERT index lives."""
-    return paths.app_data_dir() / "colbert"
+    """Where the ColBERT index lives: one per database, so an eval or benchmark run (each
+    with its own database) never rebuilds the app's index from its own Documents."""
+    name = conninfo_to_dict(db.DATABASE_URL).get("dbname", "perry")
+    return paths.app_data_dir() / ("colbert" if name == "perry" else f"colbert-{name}")
 
 
 def _live() -> Path:

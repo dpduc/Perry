@@ -11,7 +11,7 @@ import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Literal, Protocol
 
 Status = Literal["connected", "not connected", "needs reconnecting"]
@@ -234,18 +234,49 @@ class InMemoryWorkspace:
         return event
 
 
+# Gmail's age units: newer_than:7d, older_than:2m, newer_than:1y.
+_AGE_UNITS = {"d": 1, "m": 30, "y": 365}
+
+
 def _matches(email: Email, query: str) -> bool:
-    for term in query.lower().split():
-        if term.startswith("from:"):
-            ok = term[5:] in email.sender.lower()
-        elif term.startswith("to:"):
-            ok = any(term[3:] in t.lower() for t in email.to)
+    """Whether `email` matches a Gmail-style query: every term must match, and terms
+    joined by OR (parentheses are only grouping) match if either does. A plain word
+    matches the subject, body, sender or recipients, as in Gmail. An operator it doesn't
+    know (e.g. `in:inbox`) is ignored, as it narrows nothing here."""
+    clauses: list[list[str]] = []  # each clause matches if any of its terms does
+    joined = False
+    for term in query.lower().replace("(", " ").replace(")", " ").split():
+        if term == "or":
+            joined = bool(clauses)
+        elif joined:
+            clauses[-1].append(term)
+            joined = False
         else:
-            words = re.findall(r"\w+", f"{email.subject} {email.body}".lower())
-            ok = term.strip("\"'") in words
-        if not ok:
-            return False
-    return True
+            clauses.append([term])
+    return all(any(_term_matches(email, term) for term in clause) for clause in clauses)
+
+
+def _term_matches(email: Email, term: str) -> bool:
+    operator, _, value = term.rpartition(":")
+    if operator == "from":
+        return value in email.sender.lower()
+    if operator == "to":
+        return any(value in t.lower() for t in email.to)
+    if operator == "subject":
+        return value in re.findall(r"\w+", email.subject.lower())
+    if operator in ("newer_than", "older_than") and (age := _age(value)):
+        newer = email.sent_at > datetime.now(email.sent_at.tzinfo) - age
+        return newer if operator == "newer_than" else not newer
+    if operator:
+        return True
+    text = " ".join((email.subject, email.body, email.sender, *email.to))
+    return term.strip("\"'") in re.findall(r"\w+", text.lower())
+
+
+def _age(value: str) -> timedelta | None:
+    """`7d` -> 7 days; None if it isn't a Gmail age."""
+    match = re.fullmatch(r"(\d+)([dmy])", value)
+    return timedelta(days=int(match[1]) * _AGE_UNITS[match[2]]) if match else None
 
 
 _override: Workspace | None = None

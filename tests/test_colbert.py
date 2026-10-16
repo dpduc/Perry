@@ -237,3 +237,17 @@ def test_the_real_colbert_model_finds_an_exact_name(
         hits = colbert("Who owns Kestrel-7?")
 
     assert hits[0].citation == "kestrel.md"
+
+
+def test_each_database_keeps_its_own_index(monkeypatch, tmp_path):
+    from perry import colbert, db
+
+    monkeypatch.setenv("PERRY_APP_DATA_DIR", str(tmp_path))
+    server = "postgresql://perry:perry@127.0.0.1:5433"
+    folders = {}
+    for name in ("perry", "perry_eval", "perry_benchmark"):
+        monkeypatch.setattr(db, "DATABASE_URL", f"{server}/{name}")
+        folders[name] = colbert.folder()
+
+    assert len(set(folders.values())) == 3  # an eval run never rebuilds the app's index
+    assert folders["perry"] == tmp_path / "colbert"  # the app's index stays where it was

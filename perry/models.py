@@ -98,10 +98,16 @@ COLBERT_MODEL = os.getenv("PERRY_COLBERT_MODEL", DEFAULT_COLBERT_MODEL).strip()
 # slower on a CPU).
 DEFAULT_RERANK_MODEL = "cross-encoder/ms-marco-MiniLM-L6-v2"
 RERANK_MODEL = os.getenv("PERRY_RERANK_MODEL", DEFAULT_RERANK_MODEL).strip()
-# A Chunk the reranker scores below this is left out (the best one is always kept).
-# Set for the default model's scores: on the benchmark, every required page scored above
-# -6.4, and -8 drops a seventh of the other Chunks. Retune it for another model.
-RERANK_MIN_SCORE = float(os.getenv("PERRY_RERANK_MIN_SCORE", "-8"))
+# If set, a Chunk the reranker scores below it is left out (the best one is always kept).
+# Off by default: on the benchmark every required page scored above -6.4, but on the
+# eval set the default model scored the one Document that answers "which file is about
+# the vegetable patch?" at -11 (its words are tomatoes and basil), so any cutoff that
+# drops noise there drops the answer too.
+RERANK_MIN_SCORE = (
+    float(os.environ["PERRY_RERANK_MIN_SCORE"])
+    if os.getenv("PERRY_RERANK_MIN_SCORE", "").strip()
+    else None
+)
 
 # nomic-embed-text's size. pgvector's HNSW index supports at most 2000 dimensions.
 # Changing it resizes the columns and re-embeds everything (perry.reembed).

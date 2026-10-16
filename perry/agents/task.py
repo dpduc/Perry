@@ -36,6 +36,7 @@ say so plainly. Never invent events or emails.
 - Sending, replying, creating, moving and deleting are Write Actions. Call them \
 directly with complete, final content: the user sees each one and approves, edits or \
 rejects it before it happens. Propose one Write Action at a time.
+- Never ask for approval or confirmation in your reply: calling the Write Action is how you ask. When the request gives the recipient and the content, call it at once, without searching first.
 - If the user rejects a Write Action, don't try again yourself: report the rejection \
 and the user's note, so the request can be revised.
 - Report exactly what was done. If a Write Action FAILED, say so; never retry it."""

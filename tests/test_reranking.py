@@ -83,7 +83,8 @@ class ScoresBy(FakeReranker):
         return [next(s for key, s in self.scores.items() if key in t) for t in texts]
 
 
-def test_chunks_the_reranker_scores_as_unrelated_are_left_out(library):
+def test_chunks_scored_below_the_cutoff_are_left_out(library, monkeypatch):
+    monkeypatch.setattr(models, "RERANK_MIN_SCORE", -8.0)
     low = models.RERANK_MIN_SCORE - 1
     found = search_with(ScoresBy(Minutes=5.0, **{"Note 1:": -1.0, "Note 2:": -2.0, "Note": low}))
 
@@ -91,7 +92,10 @@ def test_chunks_the_reranker_scores_as_unrelated_are_left_out(library):
     assert sum(c.kept for c in found.candidates) == 3
 
 
-def test_the_best_chunk_is_kept_even_when_every_chunk_scores_as_unrelated(library):
+def test_the_best_chunk_is_kept_even_when_every_chunk_scores_below_the_cutoff(
+    library, monkeypatch
+):
+    monkeypatch.setattr(models, "RERANK_MIN_SCORE", -8.0)
     low = models.RERANK_MIN_SCORE - 1
     found = search_with(ScoresBy(Minutes=low, Note=low - 1))
 

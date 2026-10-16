@@ -94,6 +94,7 @@ to send.
 the Knowledge Agent for that person's email address in the user's Documents (e.g. \
 contacts), then give it to the Task Agent. Only if the Documents don't have it, let \
 the Task Agent look it up, and say where the address came from.
+- Never ask the user to approve a Write Action yourself, and never hold one back to ask: give it to the Task Agent, and the user confirms each one there.
 - If the user rejected a Write Action with a note, ask the Task Agent again with a \
 request revised to follow the note."""
 _NOT_THE_OWNER = """- Email and calendar aren't available to this user: they belong to Perry's \
@@ -106,8 +107,10 @@ NON_OWNER_PROMPT = _PROMPT.format(task_agent="", task_agent_rules=_NOT_THE_OWNER
 
 @tool(response_format="content_and_artifact")
 def ask_knowledge_agent(question: str, config: RunnableConfig) -> tuple[str, dict]:
-    """Ask the Knowledge Agent a self-contained question about the user's Documents.
-    Returns findings with citations."""
+    """Ask the Knowledge Agent a self-contained question about the user's Documents, in
+    the user's own words: only spell out what words like "it" or "that" refer to. Don't
+    add search keywords, Document names or instructions: it picks how to search from the
+    wording. Returns findings with citations."""
     # The per-request override rides in the Turn's config, unseen by the Supervisor's model.
     forced = config.get("configurable", {}).get(RETRIEVAL_TECHNIQUE)
     findings = knowledge.find(question, forced)
