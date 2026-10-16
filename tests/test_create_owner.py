@@ -170,6 +170,16 @@ def test_hanoi_is_not_a_time_zone_and_the_form_is_explained(database, capsys):
     assert "Region/City" in err and "Asia/Ho_Chi_Minh" in err
 
 
+def test_an_unknown_time_zone_offers_this_machines_as_the_way_out(database, monkeypatch, capsys):
+    from perry import users
+
+    machine_time_zone(monkeypatch, "Asia/Bangkok")
+    assert create_owner("duke", PASSWORD, PASSWORD, "Duke", "Hanoi", "") == 0
+
+    assert "Press Enter for Asia/Bangkok, this machine's time zone." in capsys.readouterr().err
+    assert users.owner().profile.time_zone == "Asia/Bangkok"
+
+
 def test_at_most_three_close_matches_are_suggested(database, capsys):
     create_owner("duke", PASSWORD, PASSWORD, "Duke", "America/Argentin", "UTC")
 

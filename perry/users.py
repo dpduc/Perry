@@ -670,7 +670,10 @@ def _ask_time_zone(ask: Callable[[str], str]) -> str:
         found = _known_time_zones().get(answer.lower())
         if found:
             return found
-        print(_unknown_time_zone(answer), file=sys.stderr)
+        message = _unknown_time_zone(answer)
+        if default:
+            message += f" Press Enter for {default}, this machine's time zone."
+        print(message, file=sys.stderr)
 
 
 def _machine_time_zone() -> str | None:
