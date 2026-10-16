@@ -32,7 +32,18 @@ from langgraph.config import get_config
 from langgraph.errors import GraphRecursionError
 from langgraph.types import Command, StateSnapshot
 
-from perry import charts, db, models, privacy, retries, threads, usage, workspace
+from perry import (
+    charts,
+    datasets,
+    db,
+    models,
+    privacy,
+    retries,
+    summaries,
+    threads,
+    usage,
+    workspace,
+)
 from perry.agents import analysis, knowledge, task
 from perry.images import user_message
 from perry.users import Profile, User
@@ -55,8 +66,12 @@ Agents available as tools:
 such as totals, averages, counts or comparisons.
 
 Rules:
-- If a question might be answered by the user's Documents, ask the Knowledge Agent \
-rather than answering from general knowledge.
+- The library below lists the user's Documents and Datasets. If a question might be \
+answered by a Document, ask the Knowledge Agent, even when it mentions an event, a trip, \
+money or a date, and even when it sounds like general knowledge (e.g. an idea from a book \
+the user keeps notes on). Don't answer it from general knowledge.
+- Ask the Analysis Agent only about the Datasets listed. A budget or plan written in a \
+Document is the Knowledge Agent's, not the Analysis Agent's.
 - Keep every citation in square brackets exactly as the Agent gave it.
 - If an Agent reports it couldn't find something, tell the user so. Never invent results.
 - Small talk and questions about yourself need no Agent.
@@ -68,7 +83,9 @@ step failed. Never guess what a failed step would have returned.
 
 # Email and calendar are the Owner's (ADR-0004): only the Owner's Supervisor has the Task Agent.
 _TASK_AGENT = """- ask_task_agent: the user's calendar and email: what's on, what someone wrote, \
-and sending, replying, scheduling, moving or deleting (the user confirms each of those).
+and sending, replying, scheduling, moving or deleting (the user confirms each of those). \
+For what the user's Documents say about an event (where it is, what to bring), ask the \
+Knowledge Agent instead.
 """
 _TASK_AGENT_RULES = """- To act on a request that needs other information first (e.g. email a \
 summary of some notes), get that information, then give the Task Agent the complete content \
@@ -131,6 +148,40 @@ def profile_block(profile: Profile, now: datetime) -> str:
     return "\n".join(lines)
 
 
+# The most Documents the library block names; the rest are counted.
+LIBRARY_LISTED = 50
+
+
+def library_block() -> str:
+    """What the Supervisor is told the library holds: each Document (with its topic, once
+    summarised) and each Dataset (with its columns)."""
+    documents = summaries.document_topics()
+    lines = ["The library (shared by every User):"]
+    if documents:
+        lines.append("Documents (the Knowledge Agent searches these):")
+        for name, topic in documents[:LIBRARY_LISTED]:
+            lines.append(f"- {name}: {topic}" if topic else f"- {name}")
+        if (more := len(documents) - LIBRARY_LISTED) > 0:
+            lines.append(f"- and {more} more Document{'s' if more > 1 else ''}")
+    else:
+        lines.append("There are no Documents yet.")
+    if found := datasets.list_datasets():
+        lines.append("Datasets (the Analysis Agent queries these):")
+        lines += [f"- {d.name}: {', '.join(d.columns)}" for d in found]
+    else:
+        lines.append("There are no Datasets yet.")
+    return "\n".join(lines)
+
+
+class GiveLibrary(AgentMiddleware):
+    """Adds what the library holds to the system prompt, read afresh on every model call."""
+
+    def wrap_model_call(self, request, handler):
+        block = library_block()
+        prompt = f"{request.system_prompt}\n\n{block}" if request.system_prompt else block
+        return handler(request.override(system_message=SystemMessage(prompt)))
+
+
 class GiveProfile(AgentMiddleware):
     """Adds the Turn's User's Profile, with their local date and time, to the system prompt."""
 
@@ -173,6 +224,7 @@ def _build(*, owner: bool):
         ],
         middleware=[
             retries.RetryFailedSteps(),
+            GiveLibrary(),
             GiveProfile(),
         ],
         system_prompt=SYSTEM_PROMPT if owner else NON_OWNER_PROMPT,

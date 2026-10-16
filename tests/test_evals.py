@@ -6,7 +6,7 @@ The eval itself runs on demand against the real model: `uv run python -m evals`.
 from dataclasses import replace
 from datetime import datetime, timedelta
 
-from fakes import call, last_message
+from fakes import FakeReranker, call, fake_provider, last_message
 
 from evals.harness import EvalTurn, cites, feedback, run_eval_turn
 
@@ -274,6 +274,22 @@ def test_turn_found_with_the_expected_technique_matches_the_soft_check(perry):
     assert result.techniques == ["hybrid_search"]
     assert result.technique_ok is True
     assert result.passed
+
+
+def test_a_reranked_search_still_matches_its_technique(perry):
+    from perry import models
+
+    perry.add_document("budget.md", "The marketing budget for Q3 is 40,000 dollars.")
+    turn = replace(BUDGET_TURN, technique="hybrid_search")
+    ask_knowledge_agent_and_echo(perry)
+    perry.script('{"score": 5, "comment": "Correct."}')
+
+    with models.use(fake_provider(perry.model, reranker=FakeReranker())):
+        result = run_eval_turn(turn, perry)
+
+    assert "Hybrid search, reranked" in result.reply
+    assert result.techniques == ["hybrid_search"]
+    assert result.technique_ok is True
 
 
 def test_technique_mismatch_is_reported_but_never_fails_the_turn(perry):

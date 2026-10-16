@@ -137,6 +137,8 @@ def techniques_used(reply: str) -> list[str]:
     if not match:
         return []
     used = (re.sub(r"\s*\([^()]*\)$", "", part.strip()) for part in match.group(1).split(";"))
+    # "Hybrid search, reranked": Reranking follows the technique, it isn't one.
+    used = (re.sub(r", rerank(ed|ing failed)$", "", label) for label in used)
     return [labels.get(label, label) for label in used]
 
 

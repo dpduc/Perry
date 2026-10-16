@@ -83,6 +83,7 @@ def environment() -> Iterator[None]:
 
     db.init_schema()
     _load_documents()
+    _summarise_documents()
     _load_datasets()
     from evals.workspace import fake_workspace
     from perry import workspace
@@ -116,6 +117,20 @@ def _load_documents() -> None:
     ensure_indexes_current()  # drops the deleted Documents from the ColBERT index too
     for file in files:
         print(ingest_file(file).describe())
+
+
+def _summarise_documents() -> None:
+    """Summarise the eval Documents and build their RAPTOR trees, as the app does in the
+    background: the Supervisor reads each Document's topic, and the Summary-based
+    Retrieval Techniques search the Summaries. Local model only; done ones are kept."""
+    from perry import models, summaries
+
+    if not models.summaries_supported():
+        print(f"Not summarising the eval Documents. {models.summary_model_hint()}")
+        return
+    summaries.retry_failed()
+    print("Summarising and building RAPTOR trees on the local model (slow)...", flush=True)
+    summaries.summarise_pending()
 
 
 def _load_datasets() -> None:

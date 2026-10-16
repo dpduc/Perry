@@ -106,6 +106,13 @@ def count(kind: str, *, ready: bool) -> int:
     return int(row["n"])
 
 
+def document_topics() -> list[tuple[str, str | None]]:
+    """Every Document's name with its topic (None until it is summarised), by name."""
+    with db.pool().connection() as conn:
+        rows = conn.execute("SELECT name, topic FROM documents ORDER BY name").fetchall()
+    return [(row["name"], row["topic"]) for row in rows]
+
+
 def ready_documents() -> set[str]:
     """The names of the Documents whose Summaries are ready: the only ones that
     Summary-based Retrieval Techniques search."""
