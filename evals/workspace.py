@@ -1,19 +1,26 @@
 """The calendar and email the eval Turns see: an in-memory Workspace, never real Google.
 
-Dates are relative to the run, so "tomorrow" always has something on it.
+Dates are relative to the run, so "tomorrow" always has something on it. They are in
+the eval Owner's time zone, not this machine's: Perry reads "tomorrow" in the Owner's
+time zone, and the two dates differ for part of every day.
 """
 
 from datetime import date, datetime, time, timedelta
+from zoneinfo import ZoneInfo
 
 from perry.workspace import Email, Event, InMemoryWorkspace
 
+# The eval Owner's Profile time zone.
+EVAL_TIME_ZONE = "UTC"
+_ZONE = ZoneInfo(EVAL_TIME_ZONE)
+
 
 def _at(day: date, hour: int, minute: int = 0) -> datetime:
-    return datetime.combine(day, time(hour, minute)).astimezone()
+    return datetime.combine(day, time(hour, minute), tzinfo=_ZONE)
 
 
 def fake_workspace() -> InMemoryWorkspace:
-    today = datetime.now().astimezone().date()
+    today = datetime.now(_ZONE).date()
     tomorrow = today + timedelta(days=1)
     last_week = today - timedelta(days=6)
     return InMemoryWorkspace(

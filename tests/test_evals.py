@@ -4,6 +4,7 @@ The eval itself runs on demand against the real model: `uv run python -m evals`.
 """
 
 from dataclasses import replace
+from datetime import datetime, timedelta
 
 from fakes import call, last_message
 
@@ -168,6 +169,22 @@ def test_task_turns_run_against_the_eval_workspace_fake(perry):
     assert result.passed
     assert "Roadmap review" in result.reply and "Lunch with Priya" in result.reply
 
+
+
+def test_the_eval_calendar_is_dated_in_the_eval_owners_time_zone():
+    # "Tomorrow" must mean the same day to Perry (who reads the eval Owner's time zone)
+    # and to the fake calendar, even when this machine's date differs from that zone's.
+    from zoneinfo import ZoneInfo
+
+    from evals.workspace import EVAL_TIME_ZONE, fake_workspace
+
+    zone = ZoneInfo(EVAL_TIME_ZONE)
+    today = datetime.now(zone).date()
+    roadmap, _lunch, yoga = fake_workspace().events
+
+    assert roadmap.start.astimezone(zone).date() == today + timedelta(days=1)
+    assert roadmap.start.astimezone(zone).hour == 10
+    assert yoga.start.astimezone(zone).date() == today
 
 EMAIL_SAM = EvalTurn(
     id="task-write-email",

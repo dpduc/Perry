@@ -3,6 +3,8 @@
     uv run python -m evals                      # every eval Turn
     uv run python -m evals knowledge-aphids ... # only these Turn ids (or id prefixes)
     uv run python -m evals --list
+    uv run python -m evals --paid               # every chat call (and the judge) on the paid
+                                                # model, PERRY_BENCHMARK_LLM_MODEL
     uv run python -m evals --tune-margin        # tune PERRY_CASCADE_MARGIN (embeddings only)
 
 Uses its own database (`perry_eval`, override with PERRY_EVAL_DATABASE_URL), loads
@@ -16,7 +18,7 @@ reported, and logged to LangSmith (project `perry-eval`) when tracing is on.
 import os
 import sys
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 
 # Before any perry import: perry.db reads DATABASE_URL when it is imported.
 EVAL_URL = os.getenv(
@@ -65,10 +67,11 @@ def _eval_owner():
     """The eval database's Owner, who sends every eval Turn (created on first use)."""
     import secrets
 
+    from evals.workspace import EVAL_TIME_ZONE
     from perry import users
 
     return users.owner() or users.create_owner(
-        "eval-owner", secrets.token_urlsafe(16), "Eval Owner", "UTC"
+        "eval-owner", secrets.token_urlsafe(16), "Eval Owner", EVAL_TIME_ZONE
     )
 
 
@@ -201,6 +204,9 @@ def _summary(result: Result) -> str:
 
 
 def main(args: list[str]) -> int:
+    # Replies and judge comments can hold characters (e.g. "≈") that a Windows console's
+    # code page can't print; a mangled character beats a run that dies mid-way.
+    sys.stdout.reconfigure(errors="replace")
     turns = all_turns()
     if "--list" in args:
         for turn in turns:
@@ -208,12 +214,14 @@ def main(args: list[str]) -> int:
         return 0
     if "--tune-margin" in args:
         return tune_margin(turns)
+    paid = "--paid" in args
+    args = [a for a in args if a != "--paid"]
     if args:
         turns = [t for t in turns if any(t.id.startswith(a) for a in args)]
         if not turns:
             sys.exit(f"No eval Turns match {args}. See `python -m evals --list`.")
 
-    with environment():
+    with _chat_model(paid), environment():
         results = run(turns)
 
     failed = [r for r in results if not r.passed]
@@ -227,6 +235,19 @@ def main(args: list[str]) -> int:
     for result in failed:
         print(f"  FAIL {result.turn.id}")
     return 1 if failed else 0
+
+
+def _chat_model(paid: bool):
+    """With `paid`, every chat call in the run (the judge's too) goes to the paid model, so
+    the run isn't held to the free tier's daily requests and its scores come from one model."""
+    from perry import models
+
+    if not paid:
+        return nullcontext()
+    if not models.paid_chat_available():
+        sys.exit("Not started: --paid needs OPENAI_API_KEY.")
+    print(f"Chat model: {models.paid_chat_model()} (paid)", flush=True)
+    return models.paid_chat_only()
 
 
 def tune_margin(turns: list[EvalTurn]) -> int:
