@@ -57,6 +57,21 @@ def test_reranking_brings_a_chunk_from_beyond_the_usual_six_to_the_top(library):
     assert len(found.hits) == 6
 
 
+
+def test_every_candidate_keeps_its_rerank_score_and_its_rank_before_reranking(library):
+    found = search_with(FakeReranker())
+
+    assert len(found.candidates) == 10  # the whole pool, not just the 6 kept
+    best = found.candidates[0]
+    assert best.citation.startswith(ANSWER)
+    assert best.rank_before == 10  # hybrid search ranked the minutes last
+    scores = [c.score for c in found.candidates]
+    assert scores == sorted(scores, reverse=True)
+    assert [c.kept for c in found.candidates] == [True] * 6 + [False] * 4
+    assert [c.citation for c in found.candidates if c.kept] == [
+        hit.citation for hit in found.hits
+    ]
+
 @pytest.fixture
 def real_reranker():
     """The real reranker. Skips unless it is installed and downloaded."""

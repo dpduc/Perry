@@ -12,10 +12,11 @@ technique costs and its calls count toward the Turn's Token Ceiling.
 
 import re
 from collections.abc import Iterable
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from itertools import zip_longest
 
 from langchain_core.runnables import Runnable, chain
+from langsmith import traceable
 
 from perry import colbert as colbert_index
 from perry import models, summaries, usage
@@ -443,13 +444,25 @@ def get(name: str) -> Technique:
 
 
 @dataclass(frozen=True)
+class Candidate:
+    """One Chunk the reranker scored: its Citation, its score, its place in the
+    technique's own order (1 = first), and whether it was among the Chunks kept."""
+
+    citation: str
+    score: float
+    rank_before: int
+    kept: bool
+
+
+@dataclass(frozen=True)
 class Found:
-    """What one search found: the Chunks for the Knowledge Agent, and whether the
-    reranker chose and ordered them."""
+    """What one search found: the Chunks for the Knowledge Agent, whether the reranker
+    chose and ordered them, and, if it did, every candidate it scored, best first."""
 
     hits: list[SearchHit]
     reranked: bool = False
     problem: str = ""  # why the Chunks weren't reranked, if reranking failed
+    candidates: list[Candidate] = field(default_factory=list)
 
 
 def search(technique: Technique, question: str) -> Found:
@@ -461,10 +474,36 @@ def search(technique: Technique, question: str) -> Found:
     if not hits or not models.reranking_supported():
         return Found(hits)
     try:
-        scores = models.rerank(question, [hit.text for hit in hits])
+        return _rerank(question, hits)
     except usage.TurnTokenCeilingReached:
         raise  # the Turn stops: not a reranker failure
     except Exception as error:  # noqa: BLE001 - the technique's own order still answers
         return Found(hits[:FINDINGS], problem=f"Reranking failed ({error})")
-    ranked = sorted(zip(scores, hits, strict=True), key=lambda pair: pair[0], reverse=True)
-    return Found([hit for _, hit in ranked[:FINDINGS]], reranked=True)
+
+
+def _candidates_only(found: Found) -> dict:
+    return {"candidates": [asdict(candidate) for candidate in found.candidates]}
+
+
+def _citations_only(inputs: dict) -> dict:
+    return {"question": inputs["question"], "pool": [hit.citation for hit in inputs["hits"]]}
+
+
+# Traced (when tracing is on) so a Turn's trace shows every candidate's score.
+@traceable(
+    name="Reranking", process_inputs=_citations_only, process_outputs=_candidates_only
+)
+def _rerank(question: str, hits: list[SearchHit]) -> Found:
+    scores = models.rerank(question, [hit.text for hit in hits])
+    ranked = sorted(
+        zip(scores, range(1, len(hits) + 1), hits, strict=True),
+        key=lambda scored: scored[0],
+        reverse=True,
+    )
+    candidates = [
+        Candidate(hit.citation, float(score), rank, kept=place < FINDINGS)
+        for place, (score, rank, hit) in enumerate(ranked)
+    ]
+    return Found(
+        [hit for _, _, hit in ranked[:FINDINGS]], reranked=True, candidates=candidates
+    )
