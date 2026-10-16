@@ -106,3 +106,64 @@ def test_another_users_thread_opens_as_if_it_did_not_exist(perry):
     for thread_id in (owners.id, "no-such-thread"):
         with pytest.raises(threads.ThreadNotFound, match="doesn't exist"):
             threads.open(sam, thread_id)
+
+
+def usage_rows(database, thread_id: str) -> int:
+    with database.pool().connection() as conn:
+        row = conn.execute(
+            "SELECT count(*) AS count FROM usage_ledger WHERE thread_id = %s", (thread_id,)
+        ).fetchone()
+    return row["count"]
+
+
+def test_deleting_a_thread_removes_it_and_its_checkpoints(perry):
+    from perry import supervisor, threads
+
+    perry.script("Hi Olive!")
+    thread = threads.open(perry.user, None)
+    thread.send("Hello there")
+    thread_id = thread.id
+
+    assert supervisor.thread_history(thread_id)
+    threads.delete(perry.user, thread_id)
+
+    assert thread_id not in [listed for _title, listed in threads.list_recent(perry.user)]
+    assert supervisor.thread_history(thread_id) == []
+    with pytest.raises(threads.ThreadNotFound, match="doesn't exist"):
+        threads.open(perry.user, thread_id)
+
+
+def test_another_users_thread_cannot_be_deleted_and_nothing_changes(perry):
+    from perry import supervisor, threads, users
+
+    sam = users.create_user("sam", "sam-password-1", "Sam", "UTC")
+    perry.script("Hi Olive!")
+    thread = threads.open(perry.user, None)
+    thread.send("Hello there")
+    thread_id = thread.id
+    before = threads.list_recent(perry.user)
+
+    with pytest.raises(threads.ThreadNotFound, match="doesn't exist"):
+        threads.delete(sam, thread_id)
+
+    assert threads.list_recent(perry.user) == before
+    assert supervisor.thread_history(thread_id)
+
+
+def test_deleting_a_thread_waiting_for_confirmation_keeps_ledger_rows_and_never_performs_it(
+    database, perry, workspace
+):
+    from perry import supervisor, threads
+
+    propose_email_to_sam(perry)
+    thread = threads.open(perry.user, None)
+    thread.send("Tell Sam I'm running late")
+    thread_id = thread.id
+    ledger_before = usage_rows(database, thread_id)
+
+    threads.delete(perry.user, thread_id)
+
+    assert workspace.sent == []
+    assert usage_rows(database, thread_id) == ledger_before
+    assert ledger_before > 0
+    assert supervisor.thread_history(thread_id) == []
