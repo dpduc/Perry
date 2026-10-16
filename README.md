@@ -51,7 +51,7 @@ ollama pull nomic-embed-text   # embeddings for every Chunk and Summary (needed)
 ollama pull qwen3:8b           # Summaries, Document metadata and RAPTOR (background)
 ```
 
-Create yourself as the Owner, once (it asks for a username, a password of at least 10 characters, a display name and a time zone such as `Europe/London`). Threads from before there were Users become yours:
+Create yourself as the Owner, once. It asks for a username, a password of at least 10 characters (twice), a display name and a time zone. Each answer is checked as you give it and asked again if it is wrong, so nothing you typed is lost. Enter accepts the suggestion in brackets: your username as the display name, and this machine's time zone (a name like `Asia/Ho_Chi_Minh`; matching ignores case, and a wrong name gets close matches). Ctrl+C stops with nothing created. Threads from before there were Users become yours:
 
 ```powershell
 uv run python -m perry.users create-owner
@@ -76,7 +76,7 @@ Perry asks you to log in first, even when it runs on your own machine; a login l
 
 To let someone else in, open the **Owner panel** (the link next to your name in the sidebar, or `/owner`) and click *Create an Invite*. Send them the Invite's register link. Each Invite works once and expires after 7 days, and you can withdraw an unused one. On the register page they choose a username, a password (at least 10 characters), a display name and a time zone, and are logged in straight away.
 
-*Log out* logs you out in every browser at once. After 5 failed logins for a username within 15 minutes, logins with it are refused until the 15 minutes are up. A User who forgot their password gets a Reset Code from the Owner panel. If you, the Owner, are locked out or forgot yours, reset it on this machine; it asks for the new password, logs you out everywhere and clears the failed logins:
+*Log out* logs you out in every browser at once. After 5 failed logins for a username within 15 minutes, logins with it are refused until the 15 minutes are up. A User who forgot their password gets a Reset Code from the Owner panel. If you, the Owner, are locked out or forgot yours, reset it on this machine; it asks for the new password (twice; a short one or a mismatch is asked for again), logs you out everywhere and clears the failed logins:
 
 ```powershell
 uv run python -m perry.users reset-password <username>

@@ -192,16 +192,25 @@ def test_a_new_reset_code_is_the_one_just_created(owner, monkeypatch):
 # Resetting a password on this machine (python -m perry.users reset-password)
 
 
-def reset_on_this_machine(username: str, *typed: str) -> int:
+def reset_on_this_machine(username: str, *typed, prompts: list[str] | None = None) -> int:
     """Run `python -m perry.users reset-password <username>`, typing `typed` at its
-    password prompts (the new password, then again)."""
+    password prompts (the new password, then again). An answer that is an exception
+    (EOFError, KeyboardInterrupt) is raised at its prompt instead of typed; `prompts`
+    collects the prompts shown. Fails if Perry asks for more than is typed."""
     from perry import users
 
     answers = iter(typed)
-    return users.main(
-        ["reset-password", username], ask=lambda _: next(answers),
-        ask_secret=lambda _: next(answers),
-    )
+
+    def prompt(shown: str) -> str:
+        if prompts is not None:
+            prompts.append(shown)
+        answer = next(answers, None)
+        assert answer is not None, f"Perry asked more than expected: {shown!r}"
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer
+
+    return users.main(["reset-password", username], ask=prompt, ask_secret=prompt)
 
 
 def test_a_locked_out_owner_resets_their_password_on_this_machine(owner_client, capsys):
@@ -226,15 +235,39 @@ def test_resetting_an_unknown_user_on_this_machine_fails_clearly(owner, capsys):
     assert "nobody" in capsys.readouterr().err
 
 
-def test_mismatched_passwords_on_this_machine_change_nothing(owner_client, capsys):
-    assert reset_on_this_machine(OWNER_USERNAME, NEW_PASSWORD, "something-else-1") == 1
+def test_mismatched_passwords_on_this_machine_ask_both_again(owner_client, capsys):
+    prompts = []
+    assert reset_on_this_machine(
+        OWNER_USERNAME, NEW_PASSWORD, "something-else-1", "third-password-1", "third-password-1",
+        prompts=prompts,
+    ) == 0
+
     assert "don't match" in capsys.readouterr().err
+    assert prompts.count("New password again: ") == 2
+    assert not is_logged_in(owner_client)  # the password was changed
+
+
+def test_a_short_password_on_this_machine_is_asked_again_at_once(owner_client, capsys):
+    prompts = []
+    assert reset_on_this_machine(
+        OWNER_USERNAME, "short", NEW_PASSWORD, NEW_PASSWORD, prompts=prompts
+    ) == 0
+
+    assert "at least 10 characters" in capsys.readouterr().err
+    assert prompts.count("New password again: ") == 1
+
+
+def test_ctrl_c_while_resetting_on_this_machine_changes_nothing(owner_client, capsys):
+    assert reset_on_this_machine(OWNER_USERNAME, NEW_PASSWORD, KeyboardInterrupt()) == 1
+
+    assert "Nothing was changed." in capsys.readouterr().err
     assert is_logged_in(owner_client)
 
 
-def test_a_short_password_on_this_machine_is_refused(owner_client, capsys):
-    assert reset_on_this_machine(OWNER_USERNAME, "short", "short") == 1
-    assert "at least 10 characters" in capsys.readouterr().err
+def test_end_of_input_while_resetting_on_this_machine_changes_nothing(owner_client, capsys):
+    assert reset_on_this_machine(OWNER_USERNAME, EOFError()) == 1
+
+    assert "Nothing was changed." in capsys.readouterr().err
     assert is_logged_in(owner_client)
 
 

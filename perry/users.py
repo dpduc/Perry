@@ -15,6 +15,7 @@ be given a new password on this machine with:
 """
 
 import datetime
+import difflib
 import getpass
 import os
 import secrets
@@ -23,6 +24,7 @@ import zoneinfo
 from collections.abc import Callable
 from dataclasses import dataclass
 
+import tzlocal
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
 from itsdangerous import BadSignature, URLSafeTimedSerializer
@@ -117,8 +119,7 @@ def create_user(
 
 
 def _check_new_user(username: str, password: str, display_name: str, time_zone: str) -> None:
-    if not username.strip():
-        raise Refused("Choose a username.")
+    _check_username(username)
     _check_new_password(password)
     _check_display_name(display_name)
     _check_time_zone(time_zone)
@@ -542,6 +543,11 @@ def _password_matches(password_hash: str, password: str) -> bool:
         return False
 
 
+def _check_username(username: str) -> None:
+    if not username.strip():
+        raise Refused("Choose a username.")
+
+
 def _check_display_name(display_name: str) -> None:
     if not display_name.strip():
         raise Refused("Give a display name.")
@@ -588,13 +594,14 @@ def main(
     if owner() is not None:
         print(OWNER_EXISTS, file=sys.stderr)
         return 1
-    username = ask("Username: ")
-    password = ask_secret(f"Password (at least {MIN_PASSWORD_CHARS} characters): ")
-    if ask_secret("Password again: ") != password:
-        print("The passwords don't match. Nothing was created.", file=sys.stderr)
+    try:
+        username = _ask_username(ask)
+        password = _ask_new_password(ask_secret, "Password", "Password again")
+        display_name = ask(f"Display name [{username}]: ").strip() or username
+        time_zone = _ask_time_zone(ask)
+    except (KeyboardInterrupt, EOFError):
+        print("\nNothing was created.", file=sys.stderr)
         return 1
-    display_name = ask("Display name: ")
-    time_zone = ask("Time zone (e.g. Europe/London): ").strip()
     try:
         created = create_owner(username, password, display_name, time_zone)
     except Refused as refused:
@@ -605,9 +612,10 @@ def main(
 
 
 def _reset_password_command(username: str, ask_secret: Callable[[str], str]) -> int:
-    password = ask_secret(f"New password (at least {MIN_PASSWORD_CHARS} characters): ")
-    if ask_secret("New password again: ") != password:
-        print("The passwords don't match. Nothing was changed.", file=sys.stderr)
+    try:
+        password = _ask_new_password(ask_secret, "New password", "New password again")
+    except (KeyboardInterrupt, EOFError):
+        print("\nNothing was changed.", file=sys.stderr)
         return 1
     try:
         user = reset_password_on_this_machine(username, password)
@@ -619,6 +627,87 @@ def _reset_password_command(username: str, ask_secret: Callable[[str], str]) -> 
         "Log in with the new one."
     )
     return 0
+
+
+def _ask_username(ask: Callable[[str], str]) -> str:
+    """Ask until the username passes the check create_owner applies."""
+    while True:
+        username = ask("Username: ")
+        try:
+            _check_username(username)
+        except Refused as refused:
+            print(refused, file=sys.stderr)
+            continue
+        return username.strip()
+
+
+def _ask_new_password(ask_secret: Callable[[str], str], first: str, again: str) -> str:
+    """Ask for a password, then once more to confirm it. A short one is asked for again
+    at once; if the two differ, both are asked for again."""
+    while True:
+        password = ask_secret(f"{first} (at least {MIN_PASSWORD_CHARS} characters): ")
+        try:
+            _check_new_password(password)
+        except Refused as refused:
+            print(refused, file=sys.stderr)
+            continue
+        if ask_secret(f"{again}: ") == password:
+            return password
+        print("The passwords don't match. Let's try both again.", file=sys.stderr)
+
+
+def _ask_time_zone(ask: Callable[[str], str]) -> str:
+    """Ask until the answer names a time zone (ignoring case); Enter takes this
+    machine's, if Perry can tell what it is."""
+    default = _machine_time_zone()
+    prompt = f"Time zone [{default}]: " if default else "Time zone (e.g. Asia/Ho_Chi_Minh): "
+    while True:
+        answer = ask(prompt).strip() or default
+        if not answer:
+            print("Give a time zone, in the form Region/City, e.g. Asia/Ho_Chi_Minh.",
+                  file=sys.stderr)
+            continue
+        found = _known_time_zones().get(answer.lower())
+        if found:
+            return found
+        message = _unknown_time_zone(answer)
+        if default:
+            message += f" Press Enter for {default}, this machine's time zone."
+        print(message, file=sys.stderr)
+
+
+def _machine_time_zone() -> str | None:
+    """This machine's IANA time zone, e.g. Asia/Ho_Chi_Minh; None if it can't be told
+    (Windows alone says things like "SE Asia Standard Time", which isn't one)."""
+    try:
+        name = tzlocal.get_localzone_name()
+    except (LookupError, OSError, ValueError):  # tzlocal found nothing usable
+        return None
+    return _known_time_zones().get((name or "").lower())
+
+
+def _known_time_zones() -> dict[str, str]:
+    """Every IANA time zone name, by its lowercase form."""
+    return {name.lower(): name for name in zoneinfo.available_timezones()}
+
+
+def _unknown_time_zone(answer: str) -> str:
+    """One line on why `answer` isn't a time zone, with up to 3 close matches."""
+    known = _known_time_zones()
+    # "Hanoi" is close to a city on its own, not to a whole "Asia/Ho_Chi_Minh".
+    by_city: dict[str, list[str]] = {}
+    for lower, name in known.items():
+        by_city.setdefault(lower.rsplit("/", 1)[-1], []).append(name)
+    close = difflib.get_close_matches(answer.lower(), [*known, *by_city], n=3, cutoff=0.7)
+    matches: list[str] = []
+    for lower in close:
+        for name in [known[lower]] if lower in known else by_city[lower]:
+            if name not in matches:
+                matches.append(name)
+    message = f"{answer!r} isn't a time zone."
+    if matches:
+        message += f" Did you mean {' or '.join(matches[:3])}?"
+    return message + " Use the form Region/City, e.g. Asia/Ho_Chi_Minh."
 
 
 if __name__ == "__main__":
