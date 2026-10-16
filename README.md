@@ -268,6 +268,7 @@ All optional; add any of these to `.env` to override the default.
 | `PERRY_OLLAMA_URL` | `http://127.0.0.1:11434` | Where Ollama listens |
 | `PERRY_SUMMARY_CONTEXT_TOKENS` | `8192` | Context window asked of the local model (Ollama's default, 4096, cuts longer prompts) |
 | `PERRY_REQUESTS_PER_SECOND` | `0.0667` | Request pacing (4/min; the free tier allows 5/min) |
+| `PERRY_CHAT_TIMEOUT` | `45` | Seconds a free chat call may take before the paid model answers instead |
 | `DATABASE_URL` | `postgresql://perry:perry@127.0.0.1:5433/perry` | The Postgres Perry uses |
 | `PERRY_RETRY_DELAY_SECONDS` | `2` | Wait before a failed step's one retry |
 | `PERRY_TURN_TOKEN_CEILING` | `50000` | A Turn stops and reports its findings past this many tokens |

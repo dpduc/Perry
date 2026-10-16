@@ -3,6 +3,7 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import httpx
 import pytest
 from fakes import ScriptedChatModel, call, fake_provider, last_message
 from langchain_core.messages import AIMessage
@@ -108,6 +109,15 @@ def test_an_overloaded_free_model_falls_back(two_models):
 
     assert ask("Hi") == "Answered by the paid model."
 
+
+
+def test_a_free_call_that_times_out_falls_back(two_models):
+    # What the Gemini client raises when a call outlasts PERRY_CHAT_TIMEOUT.
+    free, fallback = two_models
+    free.steps = [httpx.ReadTimeout("The read operation timed out")]
+    fallback.steps = [paid("Answered by the paid model.")]
+
+    assert ask("Hi") == "Answered by the paid model."
 
 def test_a_bug_in_the_free_call_is_not_hidden_by_the_paid_model(two_models):
     free, fallback = two_models

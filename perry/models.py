@@ -73,6 +73,9 @@ BENCHMARK_LLM_MODEL = os.getenv("PERRY_BENCHMARK_LLM_MODEL", "gpt-5.4-nano")
 # GPT-5 models can think before answering, billed as output. "none" is the cheapest, and
 # the only setting the chat completions API accepts together with tools for these models.
 OPENAI_REASONING_EFFORT = os.getenv("PERRY_OPENAI_REASONING_EFFORT", "none")
+# Seconds one free chat call may take before it counts as overloaded and the paid model
+# answers instead. Without it, an overloaded Gemini call can hold a Turn for minutes.
+CHAT_TIMEOUT = float(os.getenv("PERRY_CHAT_TIMEOUT", "45"))
 # Embeddings run on this machine (docs/adr/0003): free, no quota, and nothing embedded
 # leaves it. Changing the model re-embeds every Chunk and Summary when Perry next starts.
 EMBEDDING_MODEL = os.getenv("PERRY_EMBEDDING_MODEL", "nomic-embed-text")
@@ -355,7 +358,11 @@ def _default() -> Provider:
 
     def gemini() -> ChatGoogleGenerativeAI:
         return ChatGoogleGenerativeAI(
-            model=LLM_MODEL, temperature=0, rate_limiter=rate_limiter, max_retries=3
+            model=LLM_MODEL,
+            temperature=0,
+            rate_limiter=rate_limiter,
+            max_retries=3,
+            timeout=CHAT_TIMEOUT,
         )
 
     def chat_model() -> BaseChatModel:
