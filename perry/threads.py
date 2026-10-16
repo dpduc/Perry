@@ -55,6 +55,18 @@ def open(user: "User", thread_id: str | None) -> "Thread":
     return Thread(user, thread_id)
 
 
+def delete(user: "User", thread_id: str) -> None:
+    """Delete `user`'s Thread: its conversation, any Confirmation it waits for, and its
+    place in their Thread picker. The Usage Ledger keeps its rows (they are the Owner's
+    spending figures). Raises ThreadNotFound if the Thread isn't `user`'s."""
+    from perry import supervisor
+
+    require(thread_id, user)
+    # The conversation goes first: if that fails, the Thread is still listed to try again.
+    supervisor.forget_thread(thread_id)
+    _delete(thread_id)
+
+
 @dataclass(frozen=True)
 class Heard:
     """A voice request, transcribed: send it to run the Turn it began, then read the
@@ -71,6 +83,14 @@ class Thread:
     def __init__(self, user: "User", thread_id: str | None):
         self.user = user
         self.id = thread_id
+
+    def title(self) -> str:
+        """The Thread's title, from its first message; empty until it has one."""
+        if self.id is None:
+            return ""
+        with db.pool().connection() as conn:
+            row = conn.execute("SELECT title FROM threads WHERE id = %s", (self.id,)).fetchone()
+        return row["title"] if row else ""
 
     def hear(self, audio: bytes) -> Heard:
         """Transcribe a voice request; its Turn starts here. Raises usage.DailyCapReached,

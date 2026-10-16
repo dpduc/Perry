@@ -36,6 +36,23 @@ LOG_OUT_JS = f"""() => {{
   form.submit();
 }}"""
 
+# The Thread delete pop-up: a dialog over a dimmed page, which blocks the page until the
+# User picks Delete or Cancel. Cancel is focused, so Enter cancels.
+CSS = """
+#delete-thread-popup {
+  position: fixed; inset: 0; z-index: 1000;
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px; background: rgba(0, 0, 0, 0.5);
+}
+#delete-thread-dialog {
+  width: 100%; max-width: 28rem;
+  padding: var(--spacing-lg); background: var(--background-fill-primary);
+}
+"""
+FOCUS_CANCEL = """() => {
+  setTimeout(() => document.querySelector("#delete-thread-cancel")?.focus(), 50);
+}"""
+
 LOG_IN_AGAIN = "You're not logged in. Reload the page to log in again."
 
 
@@ -273,11 +290,47 @@ def open_thread(request: gr.Request, thread_id: str | None):
     for message in thread.history():
         is_answer = message["role"] == "assistant"
         history += charts.chat_messages(message["content"]) if is_answer else [message]
-    return history, thread.id, *confirmation_card(thread.pending_confirmation())
+    pending = thread.pending_confirmation()
+    return history, thread.id, *confirmation_card(pending), deletable(thread.id)
 
 
 def new_thread():
-    return [], None, gr.update(value=None), *confirmation_card(None)
+    """Outputs: chat, Thread, Thread picker, card outputs, Delete thread button."""
+    return [], None, gr.update(value=None), *confirmation_card(None), deletable(None)
+
+
+def deletable(thread_id: str | None):
+    """The Delete thread button: on only for a Thread that has been started."""
+    return gr.update(interactive=thread_id is not None)
+
+
+def ask_delete(request: gr.Request, thread_id: str | None):
+    """Open the pop-up that asks before deleting the Thread. Outputs: pop-up, question,
+    and the Thread it asks about (kept, so it is that one the Delete button deletes)."""
+    thread = thread_of(request, thread_id)
+    if thread.id is None:
+        return gr.skip(), gr.skip(), None
+    question = f"Delete \"{thread.title()}\"? Its messages can't be brought back."
+    return gr.update(visible=True), question, thread.id
+
+
+def delete_thread(request: gr.Request, doomed: str | None):
+    """Delete the Thread the pop-up asked about and show a new, empty one. Outputs:
+    pop-up, asked-about Thread, then `new_thread()`'s outputs with the picker refreshed."""
+    user = user_of(request)
+    if doomed is not None:
+        try:
+            threads.delete(user, doomed)
+        except threads.ThreadNotFound as missing:
+            raise gr.Error(str(missing)) from None
+    chat, thread_id, _, *rest = new_thread()
+    picker = gr.update(choices=threads.list_recent(user), value=None)
+    return gr.update(visible=False), None, chat, thread_id, picker, *rest
+
+
+def cancel_delete():
+    """Close the pop-up; nothing is deleted. Outputs: pop-up, asked-about Thread."""
+    return gr.update(visible=False), None
 
 
 def thread_choices(request: gr.Request):
@@ -286,13 +339,14 @@ def thread_choices(request: gr.Request):
 
 
 def lock_threads():
-    """While a Turn runs, the New thread button and Thread picker are off: a Turn that
-    finished after a switch would otherwise write its Thread over the one being shown."""
-    return gr.update(interactive=False), gr.update(interactive=False)
+    """While a Turn runs, the New thread button, Thread picker and Delete thread button
+    are off: a Turn that finished after a switch would otherwise write its Thread over
+    the one being shown, or into one just deleted."""
+    return gr.update(interactive=False), gr.update(interactive=False), deletable(None)
 
 
-def unlock_threads():
-    return gr.update(interactive=True), gr.update(interactive=True)
+def unlock_threads(thread_id: str | None):
+    return gr.update(interactive=True), gr.update(interactive=True), deletable(thread_id)
 
 
 def propose_upload(request: gr.Request, files: list[str] | None):
@@ -415,6 +469,8 @@ def build(privacy_notice: str = "") -> gr.Blocks:
             new_button = gr.Button("New thread", variant="primary")
             # Filled on page load with the User's own Threads.
             thread_picker = gr.Dropdown(choices=[], label="Threads", value=None)
+            # Off until a Thread is open; it asks in a pop-up before deleting anything.
+            delete_button = gr.Button("Delete thread", size="sm", interactive=False)
             gr.Markdown("### Documents")
             technique = gr.Dropdown(
                 choices=technique_choices(),
@@ -449,6 +505,16 @@ def build(privacy_notice: str = "") -> gr.Blocks:
                 google = gr.Button()
                 google_status = gr.Markdown()
 
+        # The pop-up that asks before a Thread is deleted (styled as one by CSS).
+        doomed = gr.State(None)  # the Thread it asks about
+        with (
+            gr.Column(visible=False, elem_id="delete-thread-popup") as delete_popup,
+            gr.Group(elem_id="delete-thread-dialog"),
+        ):
+            delete_question = gr.Markdown(padding=True)
+            with gr.Row():
+                confirm_delete_button = gr.Button("Delete", variant="stop")
+                cancel_delete_button = gr.Button("Cancel", elem_id="delete-thread-cancel")
         chatbot = gr.Chatbot(height="75vh", label="Perry")
         # The Confirmation card: one Write Action, shown exactly as it will be performed.
         waiting = gr.State(None)  # the Confirmation the card shows
@@ -491,12 +557,12 @@ def build(privacy_notice: str = "") -> gr.Blocks:
             """After anything that may call a model or the Workspace, refresh the sidebar."""
             return event.then(sidebar_status, None, status_outputs)
 
-        switching = [new_button, thread_picker]
+        switching = [new_button, thread_picker, delete_button]
 
         def during_turn(event):
             """Lock Thread switching from `event` until the Turn's chain ends, then refresh
             the sidebar. `.then` (not `.success`) so a failed Turn still unlocks."""
-            return then_refresh_status(event.then(unlock_threads, None, switching))
+            return then_refresh_status(event.then(unlock_threads, thread_id, switching))
 
         answer_outputs = [chatbot, thread_id, thread_picker, *card_outputs]
         during_turn(
@@ -522,9 +588,19 @@ def build(privacy_notice: str = "") -> gr.Blocks:
                 reject, [thread_id, waiting, chatbot, card_note], [chatbot, *card_outputs]
             )
         )
-        thread_picker.input(open_thread, thread_picker, [chatbot, thread_id, *card_outputs])
-        new_button.click(new_thread, None, [chatbot, thread_id, thread_picker, *card_outputs])
-        for switch in (thread_picker.input, new_button.click):
+        thread_picker.input(
+            open_thread, thread_picker, [chatbot, thread_id, *card_outputs, delete_button]
+        )
+        new_thread_outputs = [chatbot, thread_id, thread_picker, *card_outputs, delete_button]
+        new_button.click(new_thread, None, new_thread_outputs)
+        delete_button.click(
+            ask_delete, thread_id, [delete_popup, delete_question, doomed]
+        ).then(None, js=FOCUS_CANCEL)
+        confirm_delete_button.click(
+            delete_thread, doomed, [delete_popup, doomed, *new_thread_outputs]
+        )
+        cancel_delete_button.click(cancel_delete, None, [delete_popup, doomed])
+        for switch in (thread_picker.input, new_button.click, confirm_delete_button.click):
             switch(lambda: gr.Audio(value=None, visible=False), None, speaker)
         then_refresh_status(
             uploader.upload(
