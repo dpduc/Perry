@@ -55,6 +55,26 @@ def open(user: "User", thread_id: str | None) -> "Thread":
     return Thread(user, thread_id)
 
 
+def title(user: "User", thread_id: str) -> str:
+    """`user`'s Thread title. Raises ThreadNotFound if it isn't `user`'s."""
+    with db.pool().connection() as conn:
+        row = conn.execute(
+            "SELECT title FROM threads WHERE id = %s AND user_id = %s", (thread_id, user.id)
+        ).fetchone()
+    if row is None:
+        raise ThreadNotFound()
+    return row["title"]
+
+
+def delete(user: "User", thread_id: str) -> None:
+    """Delete `user`'s Thread and its saved conversation state."""
+    require(thread_id, user)
+    from perry import supervisor
+
+    supervisor.delete_thread(thread_id)
+    _delete(thread_id)
+
+
 @dataclass(frozen=True)
 class Heard:
     """A voice request, transcribed: send it to run the Turn it began, then read the

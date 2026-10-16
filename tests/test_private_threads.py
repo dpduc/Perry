@@ -108,6 +108,16 @@ def test_sending_on_another_users_thread_is_refused_in_the_ui(perry, owner, sam)
     assert len(perry.model.calls) == 1
 
 
+def test_deleting_another_users_thread_is_refused_in_the_ui(perry, owner, sam):
+    from perry import app
+
+    perry.script("Hi Olive!")
+    _, owners_thread, *_ = app.answer(request_as(owner), MESSAGE, [], None)
+
+    with pytest.raises(gr.Error, match="doesn't exist"):
+        app.delete_current_thread(request_as(sam), owners_thread)
+
+
 @pytest.mark.parametrize("decide", ["approve", "reject"])
 def test_deciding_on_another_users_confirmation_is_refused_in_the_ui(
     perry, workspace, sam, decide

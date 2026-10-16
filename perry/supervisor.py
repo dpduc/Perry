@@ -347,6 +347,11 @@ def pending_confirmation(thread_id: str) -> Confirmation | None:
     return _confirmation(interrupts[0].value) if interrupts else None
 
 
+def delete_thread(thread_id: str) -> None:
+    """Delete all saved graph state for `thread_id` from the checkpointer."""
+    _checkpointer().delete_thread(thread_id)
+
+
 def _ceiling_reply(ceiling: usage.TurnTokenCeilingReached) -> str:
     return f"I stopped because this Turn reached its limit of {ceiling.ceiling:,} tokens."
 
