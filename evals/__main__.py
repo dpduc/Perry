@@ -106,15 +106,15 @@ def _create_database() -> None:
 
 def _load_documents() -> None:
     """Make the eval database hold exactly `evals/documents/` (unchanged files cost nothing)."""
-    from perry import db
-    from perry.ingest import ensure_indexes_current, ingest_file
+    from perry import library
+    from perry.ingest import delete_document, ensure_indexes_current, ingest_file
 
     files = sorted(DOCUMENTS_DIR.iterdir())
-    with db.pool().connection() as conn:
-        conn.execute(
-            "DELETE FROM documents WHERE NOT (name = ANY(%s))", ([f.name for f in files],)
-        )
-    ensure_indexes_current()  # drops the deleted Documents from the ColBERT index too
+    ensure_indexes_current()  # e.g. a changed embedding model
+    kept = {f.name for f in files}
+    for name, *_ in library.documents():
+        if name not in kept:  # with its ColBERT entries and RAPTOR's cross-Document level
+            print(f"{name}: deleted, {delete_document(name)} chunks")
     for file in files:
         print(ingest_file(file).describe())
 

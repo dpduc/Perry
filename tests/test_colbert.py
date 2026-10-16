@@ -251,3 +251,43 @@ def test_each_database_keeps_its_own_index(monkeypatch, tmp_path):
 
     assert len(set(folders.values())) == 3  # an eval run never rebuilds the app's index
     assert folders["perry"] == tmp_path / "colbert"  # the app's index stays where it was
+
+
+CHANGE_IN_ANOTHER_PROCESS = """
+import sys
+from pathlib import Path
+
+sys.path[:0] = [sys.argv[1], str(Path(sys.argv[1]).parent)]
+from fakes import FakeColbert, ScriptedChatModel, fake_embed, fake_provider
+
+from perry import models
+from perry.ingest import ingest_file
+
+with models.use(fake_provider(ScriptedChatModel(), colbert=FakeColbert())):
+    ingest_file(Path(sys.argv[2]), embed=fake_embed)
+"""
+
+
+def test_a_change_from_the_command_line_while_perry_runs_reaches_perrys_searches(
+    documents, tmp_path
+):
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    documents("plan.md", "The Kestrel launch is in March.")
+    documents("hiking.md", "Trail notes: the ridge path is steep after the waterfall.")
+    colbert("Kestrel launch")  # the index is open, as in a running Perry
+    newer = tmp_path / "plan.md"
+    newer.write_text("The Kestrel launch moved to June.", encoding="utf-8")
+
+    script = tmp_path / "change.py"
+    script.write_text(CHANGE_IN_ANOTHER_PROCESS, encoding="utf-8")
+    tests = Path(__file__).parent
+    done = subprocess.run(
+        [sys.executable, str(script), str(tests), str(newer)],
+        cwd=tests.parent, capture_output=True, text=True, timeout=300, check=False,
+    )
+
+    assert done.returncode == 0, done.stderr[-2000:]
+    assert colbert("Kestrel launch")[0].text == "The Kestrel launch moved to June."

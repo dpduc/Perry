@@ -8,6 +8,12 @@ folder inside its Postgres transaction (`update()`), and swaps it in only after 
 commit; a failure on either side leaves both as they were. `ensure_in_step()`, run at
 start, repairs an index a crash left behind and encodes Chunks stored without vectors.
 
+Perry and a command-line run (e.g. `python -m perry.ingest`) can share one index. Each
+index is built in a folder of its own, and a small `current` file names the live one,
+so a swap never moves a folder another process has open (Windows refuses). Searches
+read `current` and open the newer index when it changes. A Postgres advisory lock lets
+one process at a time build and swap.
+
 fast-plaid (and torch) are imported on first use only: importing them takes tens of seconds.
 """
 
@@ -15,13 +21,16 @@ import functools
 import io
 import json
 import logging
+import os
 import shutil
 import threading
+import uuid
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
+import psycopg
 from psycopg.conninfo import conninfo_to_dict
 
 from perry import db, models, paths
@@ -32,6 +41,11 @@ log = logging.getLogger(__name__)
 # Beside PLAID's files: the model, and the Chunk ids in the order they were added.
 _STATE = "state.json"
 _PLAID = "plaid"
+# Names the live index's folder. Before it existed, the live index was in `live`.
+_CURRENT = "current"
+_LEGACY_LIVE = "live"
+# The Postgres advisory lock held while an index is built and swapped in (any number).
+_ADVISORY_LOCK = 2002
 # PLAID can't train its codec on a handful of token vectors ("Cannot train codec"), so a
 # tiny index is padded with a filler entry that is never returned.
 _MIN_VECTORS = 32
@@ -49,7 +63,12 @@ def folder() -> Path:
 
 
 def _live() -> Path:
-    return folder() / "live"
+    """The live index's folder, as `current` names it."""
+    try:
+        name = (folder() / _CURRENT).read_text(encoding="utf-8").strip()
+    except OSError:
+        name = ""
+    return folder() / (name or _LEGACY_LIVE)
 
 
 def _staging() -> Path:
@@ -92,7 +111,7 @@ def update() -> Iterator[Update]:
     swap itself fails (Postgres has committed by then), the index is rebuilt from Postgres
     at once; only if that fails too does the error reach the caller, and the next start
     repairs the index (`ensure_in_step`)."""
-    with _lock:
+    with _lock, _one_process_at_a_time():
         change = Update()
         try:
             yield change
@@ -105,6 +124,18 @@ def update() -> Iterator[Update]:
             except Exception:
                 log.warning("Couldn't swap in the new ColBERT index; rebuilding it", exc_info=True)
                 _rebuild()
+
+
+@contextmanager
+def _one_process_at_a_time() -> Iterator[None]:
+    """Hold the database's index lock, so Perry and a command-line run never build or
+    swap the index at once. Its own connection: the caller's is inside a transaction."""
+    with psycopg.connect(db.DATABASE_URL, autocommit=True) as conn:
+        conn.execute("SELECT pg_advisory_lock(%s)", (_ADVISORY_LOCK,))
+        try:
+            yield
+        finally:
+            conn.execute("SELECT pg_advisory_unlock(%s)", (_ADVISORY_LOCK,))
 
 
 def _rebuild() -> None:
@@ -197,15 +228,34 @@ def _build(target: Path, entries: list[tuple[int, np.ndarray]]) -> None:
 
 
 def _swap() -> None:
-    """Replace the live index with the staged one."""
-    live, staging, old = _live(), _staging(), folder() / "old"
-    if (opened := _open.pop(live, None)) is not None:
-        opened[0].close()  # Windows can't move a folder with memory-mapped files in it
-    shutil.rmtree(old, ignore_errors=True)
-    if live.exists():
-        live.rename(old)
-    staging.rename(live)
-    shutil.rmtree(old, ignore_errors=True)
+    """Make the staged index the live one: give it a folder of its own and name that
+    folder in `current` (an atomic replace), then remove the indexes no one has open."""
+    new = folder() / f"index-{uuid.uuid4().hex}"
+    _staging().rename(new)
+    pointer = folder() / f"{_CURRENT}.{new.name}"
+    pointer.write_text(new.name, encoding="utf-8")
+    os.replace(pointer, folder() / _CURRENT)
+    _remove_old_indexes()
+
+
+def _remove_old_indexes() -> None:
+    """Delete every index folder but the live one, unless a process still has it open.
+    Windows won't rename a folder with open files in it, so one that renames is unused;
+    elsewhere a process keeps its open files after they are deleted."""
+    live = _live()
+    for stale in [*folder().glob("index-*"), folder() / _LEGACY_LIVE, folder() / "old"]:
+        if stale == live or not stale.is_dir():
+            continue
+        if (opened := _open.pop(stale, None)) is not None:
+            opened[0].close()
+        trash = folder() / f"trash-{uuid.uuid4().hex}"
+        try:
+            stale.rename(trash)
+        except OSError:
+            continue  # open in another process: removed by a later swap
+        shutil.rmtree(trash, ignore_errors=True)
+    for trash in folder().glob("trash-*"):
+        shutil.rmtree(trash, ignore_errors=True)
 
 
 def _live_index():

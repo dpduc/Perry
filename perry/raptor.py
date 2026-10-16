@@ -170,7 +170,9 @@ def build_pending() -> int:
             _set_status(document_id, FAILED)
     if tried or _cross_document_missing():
         try:
-            _build_cross_document()
+            # A Document deleted or replaced during the build makes it stale: build again.
+            if not _build_cross_document():
+                _build_cross_document()
         except Exception:
             log.warning("Couldn't build the RAPTOR cross-Document level", exc_info=True)
     return tried
@@ -239,21 +241,32 @@ def _cross_document_missing() -> bool:
     return row is None and len(_roots()) > 1
 
 
-def _build_cross_document() -> None:
+def _build_cross_document() -> bool:
     """Replace the cross-Document level with one built over the ready trees' roots.
-    A single tree needs none: its root is already the top."""
+    A single tree needs none: its root is already the top. Returns False, saving
+    nothing, if a Document beneath it was deleted or replaced while it was built: its
+    Summaries were written partly from that Document's text."""
     roots = _roots()
     nodes = _build(roots) if len(roots) > 1 else []
+    beneath = sorted({chunk_id for root in roots for chunk_id in root.chunk_ids})
     with db.pool().connection() as conn, conn.transaction():
-        conn.execute("DELETE FROM summaries WHERE kind = %s AND document_id IS NULL", (KIND,))
+        # Deleting a Document locks its row; this waits for one under way to finish.
+        conn.execute("LOCK TABLE documents IN SHARE MODE")
+        alive = conn.execute(
+            "SELECT count(*) AS n FROM chunks WHERE id = ANY(%s)", (beneath,)
+        ).fetchone()["n"]
+        if alive != len(beneath):
+            return False
+        forget_cross_document(conn)
         for level, node in nodes:
-            # Skip Chunks deleted (re-uploaded) while the level was being built.
-            alive = conn.execute(
-                "SELECT array_agg(id) AS ids FROM chunks WHERE id = ANY(%s)",
-                (list(node.chunk_ids),),
-            ).fetchone()["ids"]
-            if alive:
-                _save(conn, None, level, _Draft(node.text, node.embedding, frozenset(alive)))
+            _save(conn, None, level, node)
+    return True
+
+
+def forget_cross_document(conn) -> None:
+    """Drop the cross-Document level, in `conn`'s transaction: the next build makes it
+    again from the Documents there are then."""
+    conn.execute("DELETE FROM summaries WHERE kind = %s AND document_id IS NULL", (KIND,))
 
 
 def _save(conn, document_id: int | None, level: int, node: _Draft) -> None:

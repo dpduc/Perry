@@ -74,7 +74,7 @@ _Avoid_: Quota (that is the provider's limit), daily limit
 ### Knowledge
 
 **Document**:
-A file you have uploaded so Perry can search it. A newer upload with the same name replaces the older one.
+A file you have uploaded so Perry can search it. A newer upload with the same name replaces the older one; a newer version under another name can replace it too. Deleting a Document removes everything Perry learned from it, but past Threads keep what they quoted.
 _Avoid_: File, source, attachment
 
 **Chunk**:

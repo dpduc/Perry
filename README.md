@@ -66,6 +66,7 @@ Everything else has a default; see [Settings](#settings) for the optional overri
 ```powershell
 uv run python -m perry.web              # Perry at http://127.0.0.1:7860: log in, then chat
 uv run python -m perry.ingest some\folder  # bulk-load Documents (.pdf, .md, .txt); shows the estimated cost and asks first (--yes skips the question)
+uv run python -m perry.library list   # list, replace, rename or delete Documents (see "Replace, rename or delete a Document")
 ```
 
 Your data lives in the Postgres from `compose.yaml`, in the Docker volume `pgdata`, so it survives restarts. Perry stores each Document as page-numbered Chunks with their embeddings (not the original file), and each Dataset as a table.
@@ -117,17 +118,24 @@ The repo ships small sample files you can use to try everything: [evals/document
 5. Questions that need two files work too: *How does the offsite compare with the trade fair?*
 6. Each answer ends with its Citations, then a line such as `Found with: Hybrid search (picked logically)` naming the Retrieval Technique that found them and how it was picked: `semantically` when the question was clearly closest to that technique's example questions (no extra model call), `logically` when the model chose from the techniques' descriptions. To try a specific technique, pick it in the sidebar's **Retrieval Technique** dropdown (Auto by default); it is used for your next questions, reported as `(forced)`, until you set it back to Auto. Perry still decides on its own whether a question needs your Documents at all.
 
-### 2. Replace or update a Document
+### 2. Replace, rename or delete a Document
 
 - **Same file name:** upload it again. Perry replaces the old Document and its Chunks in one step. Identical content is skipped at no cost.
-- **Different file name** (`report-v2.pdf` for `report.pdf`): the old one stays, because Documents are matched by name only.
-- **There is no delete button yet.** To remove a Document, run:
+- **Anything else** goes through the command line. It works while Perry runs, and Perry's searches see the change at once:
 
   ```powershell
-  docker compose exec db psql -U perry -d perry -c "DELETE FROM documents WHERE name = 'report.pdf';"
+  uv run python -m perry.library list                               # every Document, its Chunks and upload date
+  uv run python -m perry.library replace report.pdf C:\path\report-v2.pdf   # a newer version under another name
+eport-v2.pdf   # a newer version under another name
+  uv run python -m perry.library rename report.pdf "Q3 report.pdf"  # cited by the new name from now on
+  uv run python -m perry.library delete report.pdf                  # asks first; --yes skips the question
   ```
 
-  Its Chunks go with it. Your Threads are untouched.
+  Names are matched in any case, and accents (e.g. `Báo cáo.pdf`) are matched however they were typed. A misspelt name gets the closest names suggested. Replace shows the estimated cost before it uploads.
+
+  - Deleting or replacing removes the old Document's Chunks, Summary and RAPTOR tree, and its entries in the ColBERT index, in one step. If anything fails, it stays as it was.
+  - Afterwards the command rebuilds RAPTOR's cross-Document level on the local model (a minute or more on a CPU). Ctrl+C leaves that to Perry's next start, and until then RAPTOR searches each Document's own tree.
+  - Past Threads keep the text they quoted from a deleted Document.
 - Scanned PDF pages with no text are transcribed by the vision model and cited by page like any other. The upload estimate includes them, and a page that fails to transcribe is listed after the upload.
 
 ### 3. Analyse a Dataset

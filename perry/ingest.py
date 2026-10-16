@@ -212,12 +212,30 @@ def _unchanged(path: Path) -> bool:
     return row is not None and row["content_hash"] == content_hash(path)
 
 
-def ingest_file(path: Path, *, embed=models.embed_documents) -> IngestResult:
+class DocumentNotFound(LookupError):
+    """No Document has the name given."""
+
+
+class NameTaken(ValueError):
+    """Another Document already has the name given."""
+
+
+def ingest_file(
+    path: Path, *, embed=models.embed_documents, replaces: str | None = None
+) -> IngestResult:
     """Ingest one Document. A Document with the same name is replaced; identical content is skipped.
 
-    This doesn't check the daily cap: bulk ingestion goes through `ingest_files`.
+    `replaces` names an older version under another name (`report.pdf` for
+    `report-v2.pdf`), deleted in the same step. This doesn't check the daily cap: bulk
+    ingestion goes through `ingest_files`.
     """
+    if replaces == path.name:
+        replaces = None
+    if replaces is not None and not _exists(replaces):
+        raise DocumentNotFound(replaces)
     if _unchanged(path):
+        if replaces is not None:
+            delete_document(replaces)
         return IngestResult(path.name, "unchanged")
 
     parsed = parse(path)
@@ -231,6 +249,8 @@ def ingest_file(path: Path, *, embed=models.embed_documents) -> IngestResult:
     # Postgres and the ColBERT index change together, or neither does (docs/adr/0002).
     with colbert.update() as index, db.pool().connection() as conn, conn.transaction():
         conn.execute("DELETE FROM documents WHERE name = %s", (parsed.name,))
+        if replaces is not None:
+            _delete(conn, replaces)
         document_id = conn.execute(
             "INSERT INTO documents (name, content_hash) VALUES (%s, %s) RETURNING id",
             (parsed.name, parsed.content_hash),
@@ -265,6 +285,52 @@ def ingest_file(path: Path, *, embed=models.embed_documents) -> IngestResult:
             )
 
     return IngestResult(parsed.name, "ingested", len(chunks), untranscribed)
+
+
+def delete_document(name: str) -> int:
+    """Delete the Document called `name` with its Chunks, Summary and RAPTOR tree, and
+    return how many Chunks it had. Postgres and the ColBERT index change together, or
+    neither does (docs/adr/0002). Raises DocumentNotFound if there is none."""
+    with colbert.update() as index, db.pool().connection() as conn, conn.transaction():
+        chunks = _delete(conn, name)
+        if models.colbert_supported():
+            index.stage(conn, [])
+    return chunks
+
+
+def _delete(conn, name: str) -> int:
+    """Delete the Document called `name` in `conn`'s transaction and drop RAPTOR's
+    cross-Document level, which was partly written from it (the background job builds
+    it again from the Documents left). Returns how many Chunks it had."""
+    row = conn.execute(
+        """SELECT d.id, count(c.id) AS chunks FROM documents d
+           LEFT JOIN chunks c ON c.document_id = d.id
+           WHERE d.name = %s GROUP BY d.id""",
+        (name,),
+    ).fetchone()
+    if row is None:
+        raise DocumentNotFound(name)
+    conn.execute("DELETE FROM documents WHERE id = %s", (row["id"],))
+    raptor.forget_cross_document(conn)
+    return row["chunks"]
+
+
+def rename_document(name: str, new_name: str) -> None:
+    """Give the Document called `name` the name `new_name`; its Chunks are cited by it
+    from now on. Raises DocumentNotFound, or NameTaken if `new_name` is in use."""
+    with db.pool().connection() as conn, conn.transaction():
+        if conn.execute("SELECT 1 FROM documents WHERE name = %s", (new_name,)).fetchone():
+            raise NameTaken(new_name)
+        renamed = conn.execute(
+            "UPDATE documents SET name = %s WHERE name = %s", (new_name, name)
+        ).rowcount
+        if not renamed:
+            raise DocumentNotFound(name)
+
+
+def _exists(name: str) -> bool:
+    with db.pool().connection() as conn:
+        return conn.execute("SELECT 1 FROM documents WHERE name = %s", (name,)).fetchone() is not None
 
 
 def _transcribe_pages(path: Path, parsed: ParsedDocument) -> tuple[list[Chunk], tuple[int, ...]]:
