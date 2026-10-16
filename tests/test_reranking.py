@@ -72,6 +72,32 @@ def test_every_candidate_keeps_its_rerank_score_and_its_rank_before_reranking(li
         hit.citation for hit in found.hits
     ]
 
+
+class ScoresBy(FakeReranker):
+    """Scores a text by the first of `scores` whose key is in it."""
+
+    def __init__(self, **scores: float):
+        self.scores = scores
+
+    def score(self, question, texts):
+        return [next(s for key, s in self.scores.items() if key in t) for t in texts]
+
+
+def test_chunks_the_reranker_scores_as_unrelated_are_left_out(library):
+    low = models.RERANK_MIN_SCORE - 1
+    found = search_with(ScoresBy(Minutes=5.0, **{"Note 1:": -1.0, "Note 2:": -2.0, "Note": low}))
+
+    assert [hit.document for hit in found.hits] == [ANSWER, "note-1.md", "note-2.md"]
+    assert sum(c.kept for c in found.candidates) == 3
+
+
+def test_the_best_chunk_is_kept_even_when_every_chunk_scores_as_unrelated(library):
+    low = models.RERANK_MIN_SCORE - 1
+    found = search_with(ScoresBy(Minutes=low, Note=low - 1))
+
+    assert [hit.document for hit in found.hits] == [ANSWER]
+
+
 @pytest.fixture
 def real_reranker():
     """The real reranker. Skips unless it is installed and downloaded."""
@@ -159,3 +185,22 @@ def test_the_answer_says_when_reranking_failed(perry):
 
 def test_without_a_reranker_the_answer_names_only_the_technique(perry):
     assert found_with_line(perry, None) == "Found with: Hybrid search (forced)"
+
+
+def test_perry_loads_the_reranker_before_the_first_question():
+    class CountingReranker(FakeReranker):
+        calls = 0
+
+        def score(self, question, texts):
+            CountingReranker.calls += 1
+            return super().score(question, texts)
+
+    with models.use(fake_provider(ScriptedChatModel(), reranker=CountingReranker())):
+        models.warm_up_reranker().join()
+
+    assert CountingReranker.calls == 1
+
+
+def test_without_a_reranker_there_is_nothing_to_load():
+    with models.use(fake_provider(ScriptedChatModel())):
+        assert models.warm_up_reranker() is None

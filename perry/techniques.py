@@ -467,7 +467,8 @@ class Found:
 
 def search(technique: Technique, question: str) -> Found:
     """Search with `technique`, then, if there is a reranker, keep the FINDINGS Chunks it
-    scores best against the question, best first. The technique gathers a wider pool of
+    scores best against the question, best first, leaving out those it scores below
+    `models.RERANK_MIN_SCORE` (the best is always kept). The technique gathers a wider pool of
     candidates for it to choose from (`search.default_limit`). Without a reranker, the
     technique's own Chunks, as they came; if reranking fails, its best FINDINGS."""
     hits = technique.chain.invoke(question)
@@ -500,10 +501,13 @@ def _rerank(question: str, hits: list[SearchHit]) -> Found:
         key=lambda scored: scored[0],
         reverse=True,
     )
-    candidates = [
-        Candidate(hit.citation, float(score), rank, kept=place < FINDINGS)
-        for place, (score, rank, hit) in enumerate(ranked)
+    kept = [
+        place == 0 or (place < FINDINGS and score >= models.RERANK_MIN_SCORE)
+        for place, (score, _, _) in enumerate(ranked)
     ]
-    return Found(
-        [hit for _, _, hit in ranked[:FINDINGS]], reranked=True, candidates=candidates
-    )
+    candidates = [
+        Candidate(hit.citation, float(score), rank, kept=keep)
+        for (score, rank, hit), keep in zip(ranked, kept, strict=True)
+    ]
+    hits = [hit for (_, _, hit), keep in zip(ranked, kept, strict=True) if keep]
+    return Found(hits, reranked=True, candidates=candidates)

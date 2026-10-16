@@ -98,6 +98,10 @@ COLBERT_MODEL = os.getenv("PERRY_COLBERT_MODEL", DEFAULT_COLBERT_MODEL).strip()
 # slower on a CPU).
 DEFAULT_RERANK_MODEL = "cross-encoder/ms-marco-MiniLM-L6-v2"
 RERANK_MODEL = os.getenv("PERRY_RERANK_MODEL", DEFAULT_RERANK_MODEL).strip()
+# A Chunk the reranker scores below this is left out (the best one is always kept).
+# Set for the default model's scores: on the benchmark, every required page scored above
+# -6.4, and -8 drops a seventh of the other Chunks. Retune it for another model.
+RERANK_MIN_SCORE = float(os.getenv("PERRY_RERANK_MIN_SCORE", "-8"))
 
 # nomic-embed-text's size. pgvector's HNSW index supports at most 2000 dimensions.
 # Changing it resizes the columns and re-embeds everything (perry.reembed).
@@ -659,6 +663,25 @@ def vision_model() -> str:
 def reranking_supported() -> bool:
     """Whether the current provider has a reranker."""
     return _provider().reranker is not None
+
+
+def warm_up_reranker() -> threading.Thread | None:
+    """Load the reranker in the background now, so the first question doesn't wait for
+    it (tens of seconds on a CPU). None if there is no reranker. If loading fails, the
+    first search reports it."""
+    reranker = _provider().reranker
+    if reranker is None:
+        return None
+
+    def load() -> None:
+        try:
+            reranker.score("warm up", ["warm up"])
+        except Exception:  # noqa: BLE001, S110 - the first search reports it
+            pass
+
+    thread = threading.Thread(target=load, name="perry-reranker-warm-up", daemon=True)
+    thread.start()
+    return thread
 
 
 def colbert_supported() -> bool:

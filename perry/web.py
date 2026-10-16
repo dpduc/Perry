@@ -355,6 +355,7 @@ def main(argv: list[str] | None = None) -> None:
     ingest.ensure_indexes_current()
     # Retry Summaries that failed (e.g. the local model wasn't running) and finish pending ones.
     summaries.resume()
+    models.warm_up_reranker()
     print(f"Perry: http://{HOST}:{PORT}/")
     uvicorn.run(served, host=HOST, port=PORT)
 

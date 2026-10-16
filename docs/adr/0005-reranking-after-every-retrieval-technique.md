@@ -10,6 +10,7 @@ Every search's Chunks are reranked before the Knowledge Agent reads them: the te
 ## Consequences
 
 - With reranking off (`PERRY_RERANK_MODEL` empty), every technique returns exactly what it did before, so the benchmark compares the two with `+rerank` setups.
+- Chunks the cross-encoder scores below `PERRY_RERANK_MIN_SCORE` (-8) are left out, so fewer than 6 may go on; the best is always kept. On the benchmark every required page scored above -6.4, and the cutoff drops about a seventh of the other Chunks. It is set for the default model's scores.
 - If reranking fails, the technique's own best 6 are used and the Found-with line says "reranking failed"; the answer is never lost.
 - Summary-based techniques can widen their pool only to 9 (3 Summaries × 3 Chunks).
 - The default model (`cross-encoder/ms-marco-MiniLM-L6-v2`) is English-only; Documents in other languages need a multilingual one such as `BAAI/bge-reranker-v2-m3`, which is much slower on a CPU.

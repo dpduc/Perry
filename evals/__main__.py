@@ -188,8 +188,13 @@ def _traced(turn: EvalTurn):
             )
             try:
                 client = langsmith.Client()
+                # Feedback on a run names the run's project: LangSmith is retiring the
+                # lookup by run alone.
+                project = client.read_project(project_name=LANGSMITH_PROJECT).id
                 for key, (score, comment) in feedback(result).items():
-                    client.create_feedback(run_tree.id, key, score=score, comment=comment)
+                    client.create_feedback(
+                        run_tree.id, key, score=score, comment=comment, session_id=project
+                    )
             except Exception as error:  # noqa: BLE001
                 print(f"    (LangSmith logging failed: {type(error).__name__}: {error})")
 

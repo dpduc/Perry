@@ -275,6 +275,7 @@ All optional; add any of these to `.env` to override the default.
 | `PERRY_DAILY_CAP_USD` | `0.50` | New Turns and ingestion are refused past this until local midnight |
 | `PERRY_COLBERT_MODEL` | `answerdotai/answerai-colbert-small-v1` | Local model for the ColBERT Retrieval Technique (downloaded on first use, runs on the CPU); changing it re-encodes every Chunk at next start; empty turns ColBERT off |
 | `PERRY_RERANK_MODEL` | `cross-encoder/ms-marco-MiniLM-L6-v2` | Local cross-encoder for Reranking every search's Chunks (downloaded on first use, runs on the CPU, English); `BAAI/bge-reranker-v2-m3` for other languages (slower); empty turns Reranking off |
+| `PERRY_RERANK_MIN_SCORE` | `-8` | Chunks the reranker scores below this are left out (the best one is always kept); tuned on the benchmark for the default model, retune it for another |
 | `PERRY_SHOW_FOUND_WITH` | `true` | End answers from your Documents with the "Found with" line naming the Retrieval Technique; `false` turns it off |
 | `PERRY_PICKING_MODE` | `cascade` | How the Knowledge Agent picks a Retrieval Technique: `semantic` (nearest example questions), `logical` (the model chooses from the descriptions) or `cascade` (semantic when clearly closest, else logical). The sidebar's forced technique wins over all of them |
 | `PERRY_CASCADE_MARGIN` | `0.116` | How much nearer (cosine similarity) the closest technique's examples must be than the runner-up's for `cascade` to pick semantically; tuned on the eval set, never the benchmark (see [Eval set](#eval-set)) |
