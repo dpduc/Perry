@@ -183,6 +183,7 @@ def create_app(blocks: gr.Blocks | None = None, *, secure_cookies: bool = False)
         auth_dependency=_gradio_user,
         allowed_paths=[str(charts.directory())],
         footer_links=[],
+        css=chat_ui.CSS,
     )
 
 

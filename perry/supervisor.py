@@ -396,6 +396,12 @@ def resume_turn(user: User, thread_id: str, decision: Decision) -> TurnResult:
     return _run(user, _TurnRun.start(graph, user, thread_id, before, None), resume)
 
 
+def forget_thread(thread_id: str) -> None:
+    """Delete the Thread's conversation from the checkpointer, with any Turn waiting on a
+    Confirmation: its Write Action can never be carried out."""
+    _checkpointer().delete_thread(thread_id)
+
+
 def pending_confirmation(thread_id: str) -> Confirmation | None:
     """The Confirmation the Thread is waiting for, if any."""
     interrupts = _state_reader().get_state(_config(thread_id)).interrupts

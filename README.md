@@ -83,7 +83,7 @@ To let someone else in, open the **Owner panel** (the link next to your name in 
 uv run python -m perry.users reset-password <username>
 ```
 
-- **Sidebar:** *New thread* and a *Threads* picker to resume an earlier conversation; *Documents* and *Datasets* upload areas (the Datasets list shows each name with its columns); today's usage (`Today: N tokens · $x of $cap`); and *Calendar and email*, where you pick **Test account** or **Real account** and click **Connect Google**.
+- **Sidebar:** *New thread* and a *Threads* picker to resume an earlier conversation; *Delete thread* deletes the open one after you confirm in a pop-up (its usage stays in the Owner's spending figures); *Documents* and *Datasets* upload areas (the Datasets list shows each name with its columns); today's usage (`Today: N tokens · $x of $cap`); and *Calendar and email*, where you pick **Test account** or **Real account** and click **Connect Google**.
 - **Chat:** type in the box (the paperclip attaches images). Below it, **Record** is push-to-talk and the player on the right speaks Perry's answer.
 - When Perry needs your approval, a **Confirmation card** appears under the chat with the editable fields, **Approve**, **Reject** and a note box.
 

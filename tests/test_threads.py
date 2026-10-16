@@ -106,3 +106,63 @@ def test_another_users_thread_opens_as_if_it_did_not_exist(perry):
     for thread_id in (owners.id, "no-such-thread"):
         with pytest.raises(threads.ThreadNotFound, match="doesn't exist"):
             threads.open(sam, thread_id)
+
+
+def ledger_rows(database, thread_id: str) -> int:
+    with database.pool().connection() as conn:
+        row = conn.execute(
+            "SELECT count(*) AS n FROM usage_ledger WHERE thread_id = %s", (thread_id,)
+        ).fetchone()
+    return row["n"]
+
+
+def test_deleting_a_thread_removes_it_and_its_conversation_but_keeps_its_usage(
+    database, perry
+):
+    from perry import supervisor, threads
+
+    perry.script("Hi Olive!")
+    thread = threads.open(perry.user, None)
+    thread.send("Hello")
+    spent = ledger_rows(database, thread.id)
+
+    threads.delete(perry.user, thread.id)
+
+    assert threads.list_recent(perry.user) == []
+    with pytest.raises(threads.ThreadNotFound):
+        threads.open(perry.user, thread.id)
+    assert supervisor.thread_history(thread.id) == []
+    assert spent > 0 and ledger_rows(database, thread.id) == spent
+
+
+def test_another_users_thread_cant_be_deleted(perry):
+    from perry import threads, users
+
+    sam = users.create_user("sam", "sam-password-1", "Sam", "UTC")
+    perry.script("Hi Olive!")
+    owners = threads.open(perry.user, None)
+    owners.send("Hello")
+
+    for thread_id in (owners.id, "no-such-thread"):
+        with pytest.raises(threads.ThreadNotFound):
+            threads.delete(sam, thread_id)
+
+    assert threads.list_recent(perry.user) == [("Hello", owners.id)]
+    assert threads.open(perry.user, owners.id).history()[-1]["content"] == "Hi Olive!"
+
+
+def test_a_thread_waiting_on_a_confirmation_is_deleted_and_its_write_action_never_runs(
+    perry, workspace
+):
+    from perry import supervisor, threads
+
+    propose_email_to_sam(perry)
+    thread = threads.open(perry.user, None)
+    thread.send("Tell Sam I'm running late")
+
+    threads.delete(perry.user, thread.id)
+
+    assert supervisor.pending_confirmation(thread.id) is None
+    with pytest.raises(threads.ThreadNotFound):
+        thread.approve()
+    assert workspace.sent == []
